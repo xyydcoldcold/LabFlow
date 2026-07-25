@@ -7,7 +7,7 @@ LabFlow is a portfolio project for laboratory teams that need to submit, run, ob
 The central engineering problem is reliability rather than raw job volume. LabFlow is designed around RabbitMQ's **at-least-once delivery**: a job may be executed more than once after a failure, but leases, attempt tokens, and a database uniqueness constraint ensure that only one valid final result is accepted.
 
 > [!IMPORTANT]
-> LabFlow is currently in the **initial backend scaffold stage (Week 1)**. The Spring Boot service and system information endpoint are implemented, and the application context smoke test passes. The database schema, message broker integration, worker, frontend, and reliability workflow described below are the target architecture and are not yet operational.
+> LabFlow is currently in the **initial backend scaffold stage**. The Spring Boot service and system information endpoint are implemented, and the application context smoke test passes. The database schema, message broker integration, worker, frontend, and reliability workflow described below are the target architecture and are not yet operational.
 
 ## Current status
 
@@ -116,7 +116,7 @@ Only the Spring Boot service is currently covered by these endpoints. Database a
 No database, broker, Node.js, or Python installation is required for the current scaffold. The datasource is intentionally excluded until the first Flyway migrations and local infrastructure are added.
 
 ```bash
-git clone <repository-url>
+git clone <https://github.com/xyydcoldcold/LabFlow>
 cd LabFlow/backend
 ./gradlew bootRun
 ```
