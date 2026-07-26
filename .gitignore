@@ -3,6 +3,11 @@ HELP.md
 build/
 dist/
 node_modules/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+*.egg-info/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/
