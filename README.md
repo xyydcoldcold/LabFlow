@@ -7,7 +7,7 @@ LabFlow is a portfolio project for laboratory teams that need to submit, run, ob
 The central engineering problem is reliability rather than raw job volume. LabFlow is designed around RabbitMQ's **at-least-once delivery**: a job may be executed more than once after a failure, but leases, attempt tokens, and a database uniqueness constraint ensure that only one valid final result is accepted.
 
 > [!IMPORTANT]
-> LabFlow is currently in the **initial backend scaffold stage**. The Spring Boot service and system information endpoint are implemented, and the application context smoke test passes. The database schema, message broker integration, worker, frontend, and reliability workflow described below are the target architecture and are not yet operational.
+> LabFlow is currently in the **Engineering baseline stage**. The complete local container topology, initial PostgreSQL migrations, Testcontainers integration test, frontend typecheck, and Worker heartbeat scaffold are operational. Job messaging, task execution, and the reliability workflow described below are still planned.
 
 ## Current status
 
@@ -17,12 +17,12 @@ The central engineering problem is reliability rather than raw job volume. LabFl
 | Java backend | In progress | Spring Boot 4.1 application on Java 21 |
 | System API | Implemented | `GET /api/system/info` |
 | Health monitoring | Implemented | Spring Boot Actuator health and info exposure |
-| Automated tests | Initial | Application context smoke test; `./gradlew test` passes |
-| PostgreSQL / Flyway | Scaffolded | Dependencies and migration directory exist; datasource is temporarily disabled |
-| RabbitMQ / Outbox | Planned | No broker configuration or publisher yet |
-| Python worker / PySCF | Planned | Directory placeholder only |
-| React frontend | Planned | Directory placeholder only |
-| Docker Compose / CI | Planned | Not runnable yet |
+| Automated tests | Initial | Backend tests including a PostgreSQL Testcontainers migration test; frontend typecheck; Worker pytest |
+| PostgreSQL / Flyway | Implemented | Containerized PostgreSQL with `app_users` and `projects` migrations |
+| RabbitMQ / Outbox | Infrastructure only | RabbitMQ Management container is healthy; backend AMQP and Outbox are not implemented |
+| Python worker / PySCF | Scaffolded | Installable package and two named containers emitting heartbeat JSON; no task execution yet |
+| React frontend | Scaffolded | Strict TypeScript/Vite application served by non-root Nginx |
+| Docker Compose / CI | In progress | Six-service Compose topology is operational; GitHub Actions is not implemented |
 
 ## Why LabFlow?
 
@@ -104,40 +104,47 @@ Example response:
 GET /actuator/health
 ```
 
-Only the Spring Boot service is currently covered by these endpoints. Database and RabbitMQ health will be added when their integrations are implemented.
+The Actuator response includes PostgreSQL health. RabbitMQ currently has its own Docker healthcheck and will join backend health when AMQP integration is implemented.
 
-## Run the current backend
+## Run the local stack
 
 ### Prerequisites
 
-- Java 21
-- A POSIX-compatible shell on macOS or Linux, or Windows with `gradlew.bat`
+- Docker Engine or Docker Desktop with Docker Compose
 
-No database, broker, Node.js, or Python installation is required for the current scaffold. The datasource is intentionally excluded until the first Flyway migrations and local infrastructure are added.
+The Compose file includes development defaults. Copy `.env.example` to `.env` first if you want to customize credentials or host ports.
 
 ```bash
 git clone <https://github.com/xyydcoldcold/LabFlow>
-cd LabFlow/backend
-./gradlew bootRun
+cd LabFlow
+docker compose up --build --wait
 ```
 
-The API starts on `http://localhost:8080` by default. In another terminal:
+The local services are available at:
+
+- Frontend: `http://localhost:3000`
+- Backend API: `http://localhost:8080`
+- Backend health: `http://localhost:8080/actuator/health`
+- RabbitMQ Management: `http://localhost:15672`
+- PostgreSQL: `localhost:5432`
+
+Stop the stack without deleting persistent database or broker volumes:
 
 ```bash
-curl http://localhost:8080/api/system/info
-curl http://localhost:8080/actuator/health
+docker compose down
 ```
 
-Run the current test suite with:
+Run the current checks with:
 
 ```bash
 cd backend
 ./gradlew test
+cd ../frontend
+npm ci
+npm run typecheck
+cd ../worker
+python3 -m pytest
 ```
-
-On Windows, replace `./gradlew` with `gradlew.bat`.
-
-> `docker compose up` is not a valid startup path yet because `docker-compose.yml` has not been implemented.
 
 ## Technology stack
 
@@ -183,8 +190,8 @@ LabFlow/
 - [x] Initialize the Java 21 / Spring Boot backend
 - [x] Add the system information and Actuator health endpoints
 - [x] Add an application context smoke test
-- [ ] Add PostgreSQL, RabbitMQ, service containers, health checks, and persistent volumes
-- [ ] Create the initial Flyway migrations and Testcontainers integration test
+- [x] Add PostgreSQL, RabbitMQ, service containers, health checks, and persistent volumes
+- [x] Create the initial Flyway migrations and Testcontainers integration test
 - [ ] Implement authentication, projects, membership roles, inputs, and immutable configurations
 - [ ] Implement the job state machine, idempotent submission, and transactional outbox
 - [ ] Implement the Python worker, whitelisted task registry, SSE logs, and result storage

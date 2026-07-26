@@ -1,0 +1,10 @@
+.gradle
+build
+src/test
+
+.git
+.gitignore
+.DS_Store
+
+HELP.md
+gradlew.bat

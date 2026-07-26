@@ -1,29 +1,111 @@
+x-worker-common: &worker-common
+  image: labflow-worker:local
+  init: true
+  restart: unless-stopped
+  depends_on:
+    backend:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+  networks:
+    - labflow
+
 services:
   postgres:
     image: postgres:17-alpine
-    container_name: labflow-postgres
-
+    restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-
+      POSTGRES_DB: ${POSTGRES_DB:-labflow}
+      POSTGRES_USER: ${POSTGRES_USER:-labflow}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-labflow_dev_password}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
-
     volumes:
       - labflow-postgres-data:/var/lib/postgresql/data
-
     healthcheck:
       test:
         [
           "CMD-SHELL",
-          "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"
+          "pg_isready -U \"$${POSTGRES_USER}\" -d \"$${POSTGRES_DB}\""
         ]
       interval: 5s
       timeout: 5s
       retries: 10
       start_period: 5s
+    networks:
+      - labflow
+
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_DEFAULT_USER:-labflow}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_DEFAULT_PASS:-labflow_dev_password}
+    ports:
+      - "${RABBITMQ_PORT:-5672}:5672"
+      - "${RABBITMQ_MANAGEMENT_PORT:-15672}:15672"
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks:
+      - labflow
+
+  backend:
+    build:
+      context: ./backend
+    image: labflow-backend:local
+    init: true
+    restart: unless-stopped
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-labflow}
+      DB_USERNAME: ${POSTGRES_USER:-labflow}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-labflow_dev_password}
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - labflow
+
+  frontend:
+    build:
+      context: ./frontend
+    image: labflow-frontend:local
+    restart: unless-stopped
+    ports:
+      - "${FRONTEND_PORT:-3000}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    networks:
+      - labflow
+
+  worker-a:
+    <<: *worker-common
+    build:
+      context: ./worker
+    environment:
+      WORKER_INSTANCE_NAME: worker-a
+      WORKER_HEARTBEAT_INTERVAL_SECONDS: ${WORKER_HEARTBEAT_INTERVAL_SECONDS:-10}
+
+  worker-b:
+    <<: *worker-common
+    environment:
+      WORKER_INSTANCE_NAME: worker-b
+      WORKER_HEARTBEAT_INTERVAL_SECONDS: ${WORKER_HEARTBEAT_INTERVAL_SECONDS:-10}
 
 volumes:
   labflow-postgres-data:
+  rabbitmq-data:
+
+networks:
+  labflow:
+    driver: bridge
