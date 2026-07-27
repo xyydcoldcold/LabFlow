@@ -26,6 +26,11 @@ class DatabaseMigrationIntegrationTest {
 	private JdbcTemplate jdbcTemplate;
 
 	@Test
+	void applicationContextLoadsAgainstContainerizedPostgres() {
+		assertThat(jdbcTemplate).isNotNull();
+	}
+
+	@Test
 	void flywayAppliesAllMigrationsSuccessfully() {
 		List<String> appliedVersions = jdbcTemplate.queryForList("""
 				SELECT version

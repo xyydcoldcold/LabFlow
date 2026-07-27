@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from src.labflow_worker import build_heartbeat
+from labflow_worker import build_heartbeat
 
 
 def test_build_heartbeat_returns_stable_payload() -> None:

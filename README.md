@@ -22,7 +22,7 @@ The central engineering problem is reliability rather than raw job volume. LabFl
 | RabbitMQ / Outbox | Infrastructure only | RabbitMQ Management container is healthy; backend AMQP and Outbox are not implemented |
 | Python worker / PySCF | Scaffolded | Installable package and two named containers emitting heartbeat JSON; no task execution yet |
 | React frontend | Scaffolded | Strict TypeScript/Vite application served by non-root Nginx |
-| Docker Compose / CI | In progress | Six-service Compose topology is operational; GitHub Actions is not implemented |
+| Docker Compose / CI | Implemented | Six-service Compose topology and four-job GitHub Actions workflow |
 
 ## Why LabFlow?
 
