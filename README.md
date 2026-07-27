@@ -7,13 +7,13 @@ LabFlow is a portfolio project for laboratory teams that need to submit, run, ob
 The central engineering problem is reliability rather than raw job volume. LabFlow is designed around RabbitMQ's **at-least-once delivery**: a job may be executed more than once after a failure, but leases, attempt tokens, and a database uniqueness constraint ensure that only one valid final result is accepted.
 
 > [!IMPORTANT]
-> LabFlow is currently in the **Engineering baseline stage**. The complete local container topology, initial PostgreSQL migrations, Testcontainers integration test, frontend typecheck, and Worker heartbeat scaffold are operational. Job messaging, task execution, and the reliability workflow described below are still planned.
+> LabFlow has completed the implementation report's **Week 1 engineering baseline**. The complete local container topology, initial PostgreSQL migrations, Testcontainers integration test, frontend typecheck, Worker heartbeat scaffold, and CI workflow are operational. Week 2 domain features and the job reliability workflow described below are still planned.
 
 ## Current status
 
 | Area | Status | What exists now |
 | --- | --- | --- |
-| Repository structure | In progress | Backend, worker, frontend, infrastructure, test, and ADR directories |
+| Repository structure | Implemented | Backend, worker, frontend, infrastructure, test, and ADR directories |
 | Java backend | In progress | Spring Boot 4.1 application on Java 21 |
 | System API | Implemented | `GET /api/system/info` |
 | Health monitoring | Implemented | Spring Boot Actuator health and info exposure |
@@ -156,31 +156,35 @@ python3 -m pytest
 - Spring Boot Actuator
 - Gradle Kotlin DSL
 - JUnit 5
-
-### Selected for upcoming stages
-
-- PostgreSQL and Flyway
-- RabbitMQ
-- Python worker and PySCF
-- React and TypeScript
+- PostgreSQL 17 and Flyway
+- RabbitMQ 4 Management (local infrastructure)
+- Python 3.12+ worker package and pytest
+- React 19, TypeScript, and Vite
 - Docker Compose
 - Testcontainers
 - GitHub Actions
+
+### Selected for upcoming stages
+
+- Spring Security and project-level authorization
+- Spring AMQP and the transactional Outbox
+- PySCF task execution
 - Server-Sent Events (SSE)
 
 ## Repository layout
 
 ```text
 LabFlow/
-├── backend/                 # Spring Boot API (active development)
-├── worker/                  # Python task runner (planned)
-├── frontend/                # React client (planned)
-├── infra/                   # Broker definitions and operational assets (planned)
+├── backend/                 # Spring Boot API and Flyway migrations
+├── worker/                  # Python worker heartbeat scaffold
+├── frontend/                # React/Vite scaffold served by Nginx
+├── infra/                   # Reserved for broker and operational assets
 ├── tests/
 │   ├── fault-injection/     # Worker and dependency failure scenarios
 │   └── performance/         # Repeatable performance scenarios and results
 ├── docs/adr/                # Architecture decision records
-├── docker-compose.yml       # Placeholder
+├── .github/workflows/ci.yml # Backend, frontend, worker, and image checks
+├── docker-compose.yml       # Six-service local development stack
 └── README.md
 ```
 
@@ -192,12 +196,13 @@ LabFlow/
 - [x] Add an application context smoke test
 - [x] Add PostgreSQL, RabbitMQ, service containers, health checks, and persistent volumes
 - [x] Create the initial Flyway migrations and Testcontainers integration test
+- [x] Add CI for backend tests, frontend typecheck, Worker tests, and Docker builds
 - [ ] Implement authentication, projects, membership roles, inputs, and immutable configurations
 - [ ] Implement the job state machine, idempotent submission, and transactional outbox
 - [ ] Implement the Python worker, whitelisted task registry, SSE logs, and result storage
 - [ ] Implement heartbeats, leases, stale-attempt fencing, retry queues, cancellation, and DLQ handling
 - [ ] Build the React workflow for submission, history, attempt inspection, and result comparison
-- [ ] Add CI, end-to-end tests, fault injection, and reproducible performance benchmarks
+- [ ] Add end-to-end tests, fault injection, and reproducible performance benchmarks
 
 The detailed project plan targets two initial task types: a deterministic `demo.sleep_hash` task for reliability testing and `pyscf.single_point` for a real scientific computing path.
 
