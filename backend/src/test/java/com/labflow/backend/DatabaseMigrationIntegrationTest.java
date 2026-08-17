@@ -1,21 +1,30 @@
 package com.labflow.backend;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 import java.util.List;
 import java.util.Map;
 
+import com.jayway.jsonpath.JsonPath;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.test.web.servlet.MockMvc;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 @Testcontainers
 @SpringBootTest(classes = BackendApplication.class)
+@AutoConfigureMockMvc
 class DatabaseMigrationIntegrationTest {
 
 	@Container
@@ -24,6 +33,9 @@ class DatabaseMigrationIntegrationTest {
 
 	@Autowired
 	private JdbcTemplate jdbcTemplate;
+
+	@Autowired
+	private MockMvc mockMvc;
 
 	@Test
 	void applicationContextLoadsAgainstContainerizedPostgres() {
@@ -83,5 +95,77 @@ class DatabaseMigrationIntegrationTest {
 				.containsEntry("column_name", "owner_id")
 				.containsEntry("referenced_table", "app_users")
 				.containsEntry("referenced_column", "id");
+	}
+
+	@Test
+	void registerLoginAndBearerTokenValidationWorkEndToEnd() throws Exception {
+		String registrationJson = """
+				{
+				  "email": " Integration.User@Example.com ",
+				  "password": "strong-password",
+				  "displayName": "Integration User"
+				}
+				""";
+
+		mockMvc.perform(post("/api/auth/register")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(registrationJson))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.tokenType").value("Bearer"))
+				.andExpect(jsonPath("$.expiresIn").value(3600))
+				.andExpect(jsonPath("$.user.email").value("integration.user@example.com"));
+
+		String storedHash = jdbcTemplate.queryForObject(
+				"SELECT password_hash FROM app_users WHERE email = ?",
+				String.class,
+				"integration.user@example.com"
+		);
+		assertThat(storedHash)
+				.startsWith("$2")
+				.isNotEqualTo("strong-password");
+
+		mockMvc.perform(post("/api/auth/register")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(registrationJson))
+				.andExpect(status().isConflict())
+				.andExpect(jsonPath("$.code").value("EMAIL_ALREADY_REGISTERED"));
+
+		mockMvc.perform(post("/api/auth/login")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{
+								  "email": "integration.user@example.com",
+								  "password": "wrong-password"
+								}
+								"""))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.code").value("INVALID_CREDENTIALS"));
+
+		String loginResponse = mockMvc.perform(post("/api/auth/login")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{
+								  "email": " Integration.User@Example.com ",
+								  "password": "strong-password"
+								}
+								"""))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.tokenType").value("Bearer"))
+				.andExpect(jsonPath("$.user.email").value("integration.user@example.com"))
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+
+		String accessToken = JsonPath.read(loginResponse, "$.accessToken");
+		mockMvc.perform(get("/api/auth/me")
+						.header("Authorization", "Bearer " + accessToken))
+				.andExpect(status().isOk())
+				.andExpect(jsonPath("$.email").value("integration.user@example.com"))
+				.andExpect(jsonPath("$.displayName").value("Integration User"));
+
+		mockMvc.perform(get("/api/auth/me"))
+				.andExpect(status().isUnauthorized())
+				.andExpect(jsonPath("$.code").value("UNAUTHORIZED"))
+				.andExpect(jsonPath("$.status").value(401));
 	}
 }

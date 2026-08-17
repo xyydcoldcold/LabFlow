@@ -7,14 +7,15 @@ LabFlow is a portfolio project for laboratory teams that need to submit, run, ob
 The central engineering problem is reliability rather than raw job volume. LabFlow is designed around RabbitMQ's **at-least-once delivery**: a job may be executed more than once after a failure, but leases, attempt tokens, and a database uniqueness constraint ensure that only one valid final result is accepted.
 
 > [!IMPORTANT]
-> LabFlow has completed the implementation report's **Week 1 engineering baseline**. The complete local container topology, initial PostgreSQL migrations, Testcontainers integration test, frontend typecheck, Worker heartbeat scaffold, and CI workflow are operational. Week 2 domain features and the job reliability workflow described below are still planned.
+> LabFlow has completed the implementation report's **Week 1 engineering baseline** and **Week 2 Day 1 authentication slice**. The local container topology, initial PostgreSQL migrations, token-based registration/login, password hashing, authentication tests, frontend typecheck, Worker heartbeat scaffold, and CI workflow are operational. The remaining Week 2 domain features and the job reliability workflow described below are still planned.
 
 ## Current status
 
 | Area | Status | What exists now |
 | --- | --- | --- |
 | Repository structure | Implemented | Backend, worker, frontend, infrastructure, test, and ADR directories |
-| Java backend | In progress | Spring Boot 4.1 application on Java 21 |
+| Java backend | In progress | Spring Boot 4.1 application on Java 21 with stateless Spring Security |
+| Authentication | Implemented | Registration/login, BCrypt password hashes, signed JWT access tokens, token validation, `/me`, and consistent JSON 401/403 responses |
 | System API | Implemented | `GET /api/system/info` |
 | Health monitoring | Implemented | Spring Boot Actuator health and info exposure |
 | Automated tests | Initial | Backend tests including a PostgreSQL Testcontainers migration test; frontend typecheck; Worker pytest |
@@ -81,6 +82,44 @@ Each claimed attempt receives a short-lived lease and a unique token. The worker
 The planned `job_result` schema has a unique constraint on `job_id`. Combined with transactional token validation, it acts as the final safeguard against duplicate or late result commits.
 
 ## Implemented API
+
+### Authentication
+
+Registering creates the account and returns a one-hour Bearer token:
+
+```http
+POST /api/auth/register
+Content-Type: application/json
+
+{
+  "email": "scientist@example.com",
+  "password": "strong-password",
+  "displayName": "Ada Lovelace"
+}
+```
+
+Log in with the same credentials:
+
+```http
+POST /api/auth/login
+Content-Type: application/json
+
+{
+  "email": "scientist@example.com",
+  "password": "strong-password"
+}
+```
+
+Validate a token and load the current account:
+
+```http
+GET /api/auth/me
+Authorization: Bearer <access-token>
+```
+
+Passwords are stored only as BCrypt hashes. Email addresses are trimmed and normalized to lowercase. Missing, expired, malformed, or incorrectly signed tokens receive the same non-leaking JSON `401` structure; authenticated authorization failures use the corresponding JSON `403` structure.
+
+For non-local environments, provide a random `AUTH_JWT_SECRET` containing at least 32 UTF-8 bytes. `AUTH_JWT_ISSUER` and the ISO-8601 duration `AUTH_JWT_TTL` are also configurable.
 
 ### System information
 
@@ -153,6 +192,8 @@ python3 -m pytest
 - Java 21
 - Spring Boot 4.1
 - Spring Web MVC
+- Spring Security
+- OAuth2 Resource Server JWT validation
 - Spring Boot Actuator
 - Gradle Kotlin DSL
 - JUnit 5
@@ -166,7 +207,7 @@ python3 -m pytest
 
 ### Selected for upcoming stages
 
-- Spring Security and project-level authorization
+- Project-level authorization
 - Spring AMQP and the transactional Outbox
 - PySCF task execution
 - Server-Sent Events (SSE)
@@ -197,7 +238,8 @@ LabFlow/
 - [x] Add PostgreSQL, RabbitMQ, service containers, health checks, and persistent volumes
 - [x] Create the initial Flyway migrations and Testcontainers integration test
 - [x] Add CI for backend tests, frontend typecheck, Worker tests, and Docker builds
-- [ ] Implement authentication, projects, membership roles, inputs, and immutable configurations
+- [x] Implement registration/login, BCrypt password hashing, JWT validation, and consistent 401/403 responses
+- [ ] Implement projects, membership roles, inputs, and immutable configurations
 - [ ] Implement the job state machine, idempotent submission, and transactional outbox
 - [ ] Implement the Python worker, whitelisted task registry, SSE logs, and result storage
 - [ ] Implement heartbeats, leases, stale-attempt fencing, retry queues, cancellation, and DLQ handling

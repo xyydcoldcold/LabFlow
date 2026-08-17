@@ -65,6 +65,9 @@ services:
       DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-labflow}
       DB_USERNAME: ${POSTGRES_USER:-labflow}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-labflow_dev_password}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:-labflow-local-development-jwt-secret-change-me}
+      AUTH_JWT_ISSUER: ${AUTH_JWT_ISSUER:-https://labflow.local}
+      AUTH_JWT_TTL: ${AUTH_JWT_TTL:-PT1H}
     ports:
       - "${BACKEND_PORT:-8080}:8080"
     depends_on:
