@@ -6,24 +6,7 @@ LabFlow is a portfolio project for laboratory teams that need to submit, run, ob
 
 The central engineering problem is reliability rather than raw job volume. LabFlow is designed around RabbitMQ's **at-least-once delivery**: a job may be executed more than once after a failure, but leases, attempt tokens, and a database uniqueness constraint ensure that only one valid final result is accepted.
 
-> [!IMPORTANT]
-> LabFlow has completed the implementation report's **Week 1 engineering baseline** and **Week 2 Day 1 authentication slice**. The local container topology, initial PostgreSQL migrations, token-based registration/login, password hashing, authentication tests, frontend typecheck, Worker heartbeat scaffold, and CI workflow are operational. The remaining Week 2 domain features and the job reliability workflow described below are still planned.
 
-## Current status
-
-| Area | Status | What exists now |
-| --- | --- | --- |
-| Repository structure | Implemented | Backend, worker, frontend, infrastructure, test, and ADR directories |
-| Java backend | In progress | Spring Boot 4.1 application on Java 21 with stateless Spring Security |
-| Authentication | Implemented | Registration/login, BCrypt password hashes, signed JWT access tokens, token validation, `/me`, and consistent JSON 401/403 responses |
-| System API | Implemented | `GET /api/system/info` |
-| Health monitoring | Implemented | Spring Boot Actuator health and info exposure |
-| Automated tests | Initial | Backend tests including a PostgreSQL Testcontainers migration test; frontend typecheck; Worker pytest |
-| PostgreSQL / Flyway | Implemented | Containerized PostgreSQL with `app_users` and `projects` migrations |
-| RabbitMQ / Outbox | Infrastructure only | RabbitMQ Management container is healthy; backend AMQP and Outbox are not implemented |
-| Python worker / PySCF | Scaffolded | Installable package and two named containers emitting heartbeat JSON; no task execution yet |
-| React frontend | Scaffolded | Strict TypeScript/Vite application served by non-root Nginx |
-| Docker Compose / CI | Implemented | Six-service Compose topology and four-job GitHub Actions workflow |
 
 ## Why LabFlow?
 
@@ -228,54 +211,6 @@ LabFlow/
 ├── docker-compose.yml       # Six-service local development stack
 └── README.md
 ```
-
-## Roadmap
-
-- [x] Create the monorepo structure
-- [x] Initialize the Java 21 / Spring Boot backend
-- [x] Add the system information and Actuator health endpoints
-- [x] Add an application context smoke test
-- [x] Add PostgreSQL, RabbitMQ, service containers, health checks, and persistent volumes
-- [x] Create the initial Flyway migrations and Testcontainers integration test
-- [x] Add CI for backend tests, frontend typecheck, Worker tests, and Docker builds
-- [x] Implement registration/login, BCrypt password hashing, JWT validation, and consistent 401/403 responses
-- [ ] Implement projects, membership roles, inputs, and immutable configurations
-- [ ] Implement the job state machine, idempotent submission, and transactional outbox
-- [ ] Implement the Python worker, whitelisted task registry, SSE logs, and result storage
-- [ ] Implement heartbeats, leases, stale-attempt fencing, retry queues, cancellation, and DLQ handling
-- [ ] Build the React workflow for submission, history, attempt inspection, and result comparison
-- [ ] Add end-to-end tests, fault injection, and reproducible performance benchmarks
-
-The detailed project plan targets two initial task types: a deterministic `demo.sleep_hash` task for reliability testing and `pyscf.single_point` for a real scientific computing path.
-
-## Planned acceptance tests
-
-The reliability claims will be treated as complete only when they are backed by automated tests and retained evidence:
-
-| Scenario | Required outcome |
-| --- | --- |
-| 50 concurrent submissions with the same key and body | One job and one idempotency record |
-| Same key reused with a different body | `409 IDEMPOTENCY_KEY_REUSED`; no new job |
-| RabbitMQ unavailable after database commit | Outbox event remains and is eventually delivered |
-| Worker killed during execution | Lease expires, old attempt becomes `LOST`, another worker completes the job |
-| Stale worker submits a late result | `409 STALE_ATTEMPT`; accepted result remains unchanged |
-| Browser reconnects to the log stream | Missing chunks replay in sequence using `Last-Event-ID` |
-| Retry limit is reached | Job becomes `FAILED` and its message enters the DLQ |
-
-Performance targets in the implementation report are goals, not measured results. Throughput, latency, and recovery numbers will be published only after the benchmark environment, raw output, commit, and repeated runs are stored in the repository.
-
-## Scope and non-goals
-
-The MVP focuses on a reliable, explainable execution path for validated task types. It will not:
-
-- execute arbitrary user-provided Python or shell commands;
-- act as a notebook environment;
-- provide a general workflow DAG engine;
-- replace Slurm or another HPC scheduler;
-- include billing;
-- claim production-grade multi-region or exactly-once execution.
-
-Object storage, multi-instance SSE broadcasting, quotas, fair scheduling, Kubernetes, and Slurm adapters are stretch goals and do not block the core reliability milestone.
 
 
 ## License
