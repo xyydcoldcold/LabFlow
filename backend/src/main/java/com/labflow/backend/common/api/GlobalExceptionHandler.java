@@ -6,12 +6,18 @@ import jakarta.servlet.http.HttpServletRequest;
 
 import com.labflow.backend.auth.EmailAlreadyRegisteredException;
 import com.labflow.backend.auth.InvalidCredentialsException;
+import com.labflow.backend.project.ProjectAccessDeniedException;
+import com.labflow.backend.project.ProjectMemberAlreadyExistsException;
+import com.labflow.backend.project.ProjectMemberNotFoundException;
+import com.labflow.backend.project.ProjectMemberUserNotFoundException;
+import com.labflow.backend.project.ProjectNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -32,6 +38,51 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.UNAUTHORIZED, "INVALID_CREDENTIALS", exception.getMessage(), request);
     }
 
+    @ExceptionHandler(ProjectNotFoundException.class)
+    ResponseEntity<ApiErrorResponse> handleProjectNotFound(
+            ProjectNotFoundException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.NOT_FOUND, "PROJECT_NOT_FOUND", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(ProjectMemberUserNotFoundException.class)
+    ResponseEntity<ApiErrorResponse> handleProjectMemberUserNotFound(
+            ProjectMemberUserNotFoundException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.NOT_FOUND, "USER_NOT_FOUND", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(ProjectMemberNotFoundException.class)
+    ResponseEntity<ApiErrorResponse> handleProjectMemberNotFound(
+            ProjectMemberNotFoundException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.NOT_FOUND, "PROJECT_MEMBER_NOT_FOUND", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(ProjectMemberAlreadyExistsException.class)
+    ResponseEntity<ApiErrorResponse> handleProjectMemberAlreadyExists(
+            ProjectMemberAlreadyExistsException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.CONFLICT, "PROJECT_MEMBER_ALREADY_EXISTS", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(ProjectAccessDeniedException.class)
+    ResponseEntity<ApiErrorResponse> handleProjectAccessDenied(
+            ProjectAccessDeniedException exception,
+            HttpServletRequest request
+    ) {
+        return error(
+                HttpStatus.FORBIDDEN,
+                "PROJECT_ACCESS_DENIED",
+                "You do not have permission to access this project",
+                request
+        );
+    }
+
     @ExceptionHandler(AccessDeniedException.class)
     ResponseEntity<ApiErrorResponse> handleAccessDenied(
             AccessDeniedException exception,
@@ -45,7 +96,11 @@ public class GlobalExceptionHandler {
         );
     }
 
-    @ExceptionHandler({MethodArgumentNotValidException.class, IllegalArgumentException.class})
+    @ExceptionHandler({
+            MethodArgumentNotValidException.class,
+            HttpMessageNotReadableException.class,
+            IllegalArgumentException.class
+    })
     ResponseEntity<ApiErrorResponse> handleBadRequest(Exception exception, HttpServletRequest request) {
         return error(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Request validation failed", request);
     }
