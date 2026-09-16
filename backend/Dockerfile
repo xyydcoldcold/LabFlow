@@ -17,7 +17,9 @@ RUN ./gradlew bootJar --no-daemon
 FROM eclipse-temurin:21-jre-alpine AS runtime
 
 RUN addgroup -S labflow \
-    && adduser -S -G labflow -h /app labflow
+    && adduser -S -u 10001 -G labflow -h /app labflow \
+    && mkdir -p /var/lib/labflow/artifacts \
+    && chown -R labflow:labflow /var/lib/labflow
 
 WORKDIR /app
 

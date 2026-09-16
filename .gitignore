@@ -8,6 +8,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 *.egg-info/
+data/
 !gradle/wrapper/gradle-wrapper.jar
 !**/src/main/**/build/
 !**/src/test/**/build/

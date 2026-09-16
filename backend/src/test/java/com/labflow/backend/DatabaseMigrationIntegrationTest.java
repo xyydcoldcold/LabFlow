@@ -51,7 +51,7 @@ class DatabaseMigrationIntegrationTest {
 				ORDER BY installed_rank
 				""", String.class);
 
-		assertThat(appliedVersions).contains("1", "2", "3");
+		assertThat(appliedVersions).contains("1", "2", "3", "4");
 	}
 
 	@Test
@@ -60,11 +60,72 @@ class DatabaseMigrationIntegrationTest {
 				SELECT table_name
 				FROM information_schema.tables
 				WHERE table_schema = 'public'
-				  AND table_name IN ('app_users', 'project_members', 'projects')
+				  AND table_name IN ('app_users', 'molecular_inputs', 'project_members', 'projects')
 				ORDER BY table_name
 				""", String.class);
 
-		assertThat(tables).containsExactly("app_users", "project_members", "projects");
+		assertThat(tables).containsExactly("app_users", "molecular_inputs", "project_members", "projects");
+	}
+
+	@Test
+	void molecularInputsReferencesProjectsWithProjectScopedDeduplication() {
+		Map<String, Object> foreignKey = jdbcTemplate.queryForMap("""
+				SELECT
+				    tc.constraint_name,
+				    kcu.column_name,
+				    ccu.table_name AS referenced_table,
+				    ccu.column_name AS referenced_column
+				FROM information_schema.table_constraints tc
+				JOIN information_schema.key_column_usage kcu
+				  ON tc.constraint_catalog = kcu.constraint_catalog
+				 AND tc.constraint_schema = kcu.constraint_schema
+				 AND tc.constraint_name = kcu.constraint_name
+				JOIN information_schema.constraint_column_usage ccu
+				  ON tc.constraint_catalog = ccu.constraint_catalog
+				 AND tc.constraint_schema = ccu.constraint_schema
+				 AND tc.constraint_name = ccu.constraint_name
+				WHERE tc.constraint_type = 'FOREIGN KEY'
+				  AND tc.table_schema = 'public'
+				  AND tc.table_name = 'molecular_inputs'
+				  AND tc.constraint_name = 'fk_molecular_inputs_project'
+				""");
+
+		assertThat(foreignKey)
+				.containsEntry("column_name", "project_id")
+				.containsEntry("referenced_table", "projects")
+				.containsEntry("referenced_column", "id");
+
+		List<String> uniqueColumns = jdbcTemplate.queryForList("""
+				SELECT kcu.column_name
+				FROM information_schema.table_constraints tc
+				JOIN information_schema.key_column_usage kcu
+				  ON tc.constraint_catalog = kcu.constraint_catalog
+				 AND tc.constraint_schema = kcu.constraint_schema
+				 AND tc.constraint_name = kcu.constraint_name
+				WHERE tc.constraint_type = 'UNIQUE'
+				  AND tc.table_schema = 'public'
+				  AND tc.table_name = 'molecular_inputs'
+				  AND tc.constraint_name = 'uq_molecular_inputs_project_sha256'
+				ORDER BY kcu.ordinal_position
+				""", String.class);
+
+		assertThat(uniqueColumns).containsExactly("project_id", "sha256");
+	}
+
+	@Test
+	void molecularInputsConstrainsChecksumsSizesAndArtifactPaths() {
+		List<String> constraints = jdbcTemplate.queryForList("""
+				SELECT constraint_name
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'public'
+				  AND table_name = 'molecular_inputs'
+				""", String.class);
+
+		assertThat(constraints).contains(
+				"chk_molecular_inputs_sha256",
+				"chk_molecular_inputs_size",
+				"uq_molecular_inputs_artifact_path"
+		);
 	}
 
 	@Test
