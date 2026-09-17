@@ -7,6 +7,8 @@ import jakarta.servlet.http.HttpServletRequest;
 import com.labflow.backend.artifact.ArtifactStorageException;
 import com.labflow.backend.auth.EmailAlreadyRegisteredException;
 import com.labflow.backend.auth.InvalidCredentialsException;
+import com.labflow.backend.experimentconfig.ExperimentConfigNotFoundException;
+import com.labflow.backend.experimentconfig.InvalidExperimentConfigException;
 import com.labflow.backend.molecularinput.InvalidMolecularInputException;
 import com.labflow.backend.molecularinput.MolecularInputNotFoundException;
 import com.labflow.backend.molecularinput.MolecularInputReadException;
@@ -96,6 +98,22 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         return error(HttpStatus.NOT_FOUND, "MOLECULAR_INPUT_NOT_FOUND", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(ExperimentConfigNotFoundException.class)
+    ResponseEntity<ApiErrorResponse> handleExperimentConfigNotFound(
+            ExperimentConfigNotFoundException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.NOT_FOUND, "EXPERIMENT_CONFIG_NOT_FOUND", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(InvalidExperimentConfigException.class)
+    ResponseEntity<ApiErrorResponse> handleInvalidExperimentConfig(
+            InvalidExperimentConfigException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.BAD_REQUEST, "INVALID_EXPERIMENT_CONFIG", exception.getMessage(), request);
     }
 
     @ExceptionHandler(InvalidMolecularInputException.class)

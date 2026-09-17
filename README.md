@@ -128,6 +128,32 @@ GET /actuator/health
 
 The Actuator response includes PostgreSQL health. RabbitMQ currently has its own Docker healthcheck and will join backend health when AMQP integration is implemented.
 
+### Versioned experiment configurations
+
+Project contributors create an immutable configuration version with:
+
+```http
+POST /api/projects/{projectId}/configs
+Authorization: Bearer <access-token>
+Content-Type: application/json
+
+{
+  "name": "Baseline",
+  "spec": {
+    "schemaVersion": 1,
+    "taskType": "pyscf.single_point",
+    "method": "RHF",
+    "basis": "sto-3g",
+    "charge": 0,
+    "spin": 0,
+    "maxMemoryMb": 1024,
+    "timeoutSeconds": 300
+  }
+}
+```
+
+Posting the same name again creates the next version; it never updates an existing row. Project members can inspect every version with `GET /api/projects/{projectId}/configs` or fetch one through `GET /api/projects/{projectId}/configs/{configId}`. The version 1 contract is published at `backend/src/main/resources/schemas/experiment-config-v1.schema.json`.
+
 ## Run the local stack
 
 ### Prerequisites
@@ -190,7 +216,6 @@ python3 -m pytest
 
 ### Selected for upcoming stages
 
-- Project-level authorization
 - Spring AMQP and the transactional Outbox
 - PySCF task execution
 - Server-Sent Events (SSE)

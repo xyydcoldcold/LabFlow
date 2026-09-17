@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://labflow.local/schemas/experiment-config-v1.schema.json",
+  "title": "LabFlow experiment config v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schemaVersion",
+    "taskType",
+    "method",
+    "basis",
+    "charge",
+    "spin",
+    "maxMemoryMb",
+    "timeoutSeconds"
+  ],
+  "properties": {
+    "schemaVersion": { "const": 1 },
+    "taskType": { "const": "pyscf.single_point" },
+    "method": { "type": "string", "minLength": 1, "maxLength": 50 },
+    "basis": { "type": "string", "minLength": 1, "maxLength": 100 },
+    "charge": { "type": "integer", "minimum": -20, "maximum": 20 },
+    "spin": { "type": "integer", "minimum": 0, "maximum": 20 },
+    "maxMemoryMb": { "type": "integer", "minimum": 128, "maximum": 65536 },
+    "timeoutSeconds": { "type": "integer", "minimum": 1, "maximum": 86400 }
+  }
+}

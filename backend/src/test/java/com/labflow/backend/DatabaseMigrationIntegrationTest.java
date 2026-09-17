@@ -51,7 +51,7 @@ class DatabaseMigrationIntegrationTest {
 				ORDER BY installed_rank
 				""", String.class);
 
-		assertThat(appliedVersions).contains("1", "2", "3", "4");
+		assertThat(appliedVersions).contains("1", "2", "3", "4", "5");
 	}
 
 	@Test
@@ -60,11 +60,42 @@ class DatabaseMigrationIntegrationTest {
 				SELECT table_name
 				FROM information_schema.tables
 				WHERE table_schema = 'public'
-				  AND table_name IN ('app_users', 'molecular_inputs', 'project_members', 'projects')
+				  AND table_name IN ('app_users', 'experiment_configs', 'molecular_inputs', 'project_members', 'projects')
 				ORDER BY table_name
 				""", String.class);
 
-		assertThat(tables).containsExactly("app_users", "molecular_inputs", "project_members", "projects");
+		assertThat(tables).containsExactly(
+				"app_users", "experiment_configs", "molecular_inputs", "project_members", "projects"
+		);
+	}
+
+	@Test
+	void experimentConfigsAreImmutableProjectScopedVersions() {
+		List<String> uniqueColumns = jdbcTemplate.queryForList("""
+				SELECT kcu.column_name
+				FROM information_schema.table_constraints tc
+				JOIN information_schema.key_column_usage kcu
+				  ON tc.constraint_catalog = kcu.constraint_catalog
+				 AND tc.constraint_schema = kcu.constraint_schema
+				 AND tc.constraint_name = kcu.constraint_name
+				WHERE tc.constraint_type = 'UNIQUE'
+				  AND tc.table_schema = 'public'
+				  AND tc.table_name = 'experiment_configs'
+				  AND tc.constraint_name = 'uq_experiment_configs_project_name_version'
+				ORDER BY kcu.ordinal_position
+				""", String.class);
+
+		assertThat(uniqueColumns).containsExactly("project_id", "name", "version");
+
+		String specType = jdbcTemplate.queryForObject("""
+				SELECT data_type
+				FROM information_schema.columns
+				WHERE table_schema = 'public'
+				  AND table_name = 'experiment_configs'
+				  AND column_name = 'spec_json'
+				""", String.class);
+
+		assertThat(specType).isEqualTo("jsonb");
 	}
 
 	@Test
@@ -313,5 +344,81 @@ class DatabaseMigrationIntegrationTest {
 				.andExpect(status().isUnauthorized())
 				.andExpect(jsonPath("$.code").value("UNAUTHORIZED"))
 				.andExpect(jsonPath("$.status").value(401));
+	}
+
+	@Test
+	void experimentConfigVersionsAreCreatedWithoutOverwritingHistory() throws Exception {
+		String registrationResponse = mockMvc.perform(post("/api/auth/register")
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{
+								  "email": "config-owner@example.com",
+								  "password": "strong-password",
+								  "displayName": "Config Owner"
+								}
+								"""))
+				.andExpect(status().isCreated())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+		String accessToken = JsonPath.read(registrationResponse, "$.accessToken");
+
+		String projectResponse = mockMvc.perform(post("/api/projects")
+						.header("Authorization", "Bearer " + accessToken)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content("""
+								{"name":"Versioned Config Test"}
+								"""))
+				.andExpect(status().isCreated())
+				.andReturn()
+				.getResponse()
+				.getContentAsString();
+		Number projectId = JsonPath.read(projectResponse, "$.id");
+
+		mockMvc.perform(post("/api/projects/{projectId}/configs", projectId.longValue())
+						.header("Authorization", "Bearer " + accessToken)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(configRequest("sto-3g")))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.name").value("Baseline"))
+				.andExpect(jsonPath("$.version").value(1))
+				.andExpect(jsonPath("$.spec.basis").value("sto-3g"));
+
+		mockMvc.perform(post("/api/projects/{projectId}/configs", projectId.longValue())
+						.header("Authorization", "Bearer " + accessToken)
+						.contentType(MediaType.APPLICATION_JSON)
+						.content(configRequest("6-31g")))
+				.andExpect(status().isCreated())
+				.andExpect(jsonPath("$.version").value(2))
+				.andExpect(jsonPath("$.spec.basis").value("6-31g"));
+
+		List<Map<String, Object>> versions = jdbcTemplate.queryForList("""
+				SELECT version, spec_json ->> 'basis' AS basis
+				FROM experiment_configs
+				WHERE project_id = ? AND name = 'Baseline'
+				ORDER BY version
+				""", projectId.longValue());
+
+		assertThat(versions).hasSize(2);
+		assertThat(versions.get(0)).containsEntry("version", 1).containsEntry("basis", "sto-3g");
+		assertThat(versions.get(1)).containsEntry("version", 2).containsEntry("basis", "6-31g");
+	}
+
+	private String configRequest(String basis) {
+		return """
+				{
+				  "name": "Baseline",
+				  "spec": {
+				    "schemaVersion": 1,
+				    "taskType": "pyscf.single_point",
+				    "method": "RHF",
+				    "basis": "%s",
+				    "charge": 0,
+				    "spin": 0,
+				    "maxMemoryMb": 1024,
+				    "timeoutSeconds": 300
+				  }
+				}
+				""".formatted(basis);
 	}
 }
