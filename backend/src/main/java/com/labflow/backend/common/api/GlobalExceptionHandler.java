@@ -4,8 +4,13 @@ import java.time.Instant;
 
 import jakarta.servlet.http.HttpServletRequest;
 
+import com.labflow.backend.artifact.ArtifactStorageException;
 import com.labflow.backend.auth.EmailAlreadyRegisteredException;
 import com.labflow.backend.auth.InvalidCredentialsException;
+import com.labflow.backend.molecularinput.InvalidMolecularInputException;
+import com.labflow.backend.molecularinput.MolecularInputNotFoundException;
+import com.labflow.backend.molecularinput.MolecularInputReadException;
+import com.labflow.backend.molecularinput.MolecularInputTooLargeException;
 import com.labflow.backend.project.ProjectAccessDeniedException;
 import com.labflow.backend.project.ProjectMemberAlreadyExistsException;
 import com.labflow.backend.project.ProjectMemberNotFoundException;
@@ -13,11 +18,13 @@ import com.labflow.backend.project.ProjectMemberUserNotFoundException;
 import com.labflow.backend.project.ProjectNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
-import org.springframework.http.converter.HttpMessageNotReadableException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
+import org.springframework.web.multipart.support.MissingServletRequestPartException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -79,6 +86,56 @@ public class GlobalExceptionHandler {
                 HttpStatus.FORBIDDEN,
                 "PROJECT_ACCESS_DENIED",
                 "You do not have permission to access this project",
+                request
+        );
+    }
+
+    @ExceptionHandler(MolecularInputNotFoundException.class)
+    ResponseEntity<ApiErrorResponse> handleMolecularInputNotFound(
+            MolecularInputNotFoundException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.NOT_FOUND, "MOLECULAR_INPUT_NOT_FOUND", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(InvalidMolecularInputException.class)
+    ResponseEntity<ApiErrorResponse> handleInvalidMolecularInput(
+            InvalidMolecularInputException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.BAD_REQUEST, "INVALID_MOLECULAR_INPUT", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler({MolecularInputTooLargeException.class, MaxUploadSizeExceededException.class})
+    ResponseEntity<ApiErrorResponse> handleMolecularInputTooLarge(
+            Exception exception,
+            HttpServletRequest request
+    ) {
+        return error(
+                HttpStatus.CONTENT_TOO_LARGE,
+                "MOLECULAR_INPUT_TOO_LARGE",
+                "Molecular input exceeds the maximum upload size",
+                request
+        );
+    }
+
+    @ExceptionHandler(MissingServletRequestPartException.class)
+    ResponseEntity<ApiErrorResponse> handleMissingRequestPart(
+            MissingServletRequestPartException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.BAD_REQUEST, "VALIDATION_FAILED", "Required upload part is missing", request);
+    }
+
+    @ExceptionHandler({MolecularInputReadException.class, ArtifactStorageException.class})
+    ResponseEntity<ApiErrorResponse> handleArtifactFailure(
+            RuntimeException exception,
+            HttpServletRequest request
+    ) {
+        return error(
+                HttpStatus.INTERNAL_SERVER_ERROR,
+                "ARTIFACT_OPERATION_FAILED",
+                "The artifact operation could not be completed",
                 request
         );
     }
