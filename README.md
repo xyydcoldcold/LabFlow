@@ -154,6 +154,19 @@ Content-Type: application/json
 
 Posting the same name again creates the next version; it never updates an existing row. Project members can inspect every version with `GET /api/projects/{projectId}/configs` or fetch one through `GET /api/projects/{projectId}/configs/{configId}`. The version 1 contract is published at `backend/src/main/resources/schemas/experiment-config-v1.schema.json`.
 
+### Web workspace
+
+The React workspace now provides the minimum Week 2 workflow: registration and login, visible-project selection, owner-only membership management, validated XYZ upload, and immutable experiment-config creation. Controls reflect the current project role, while the backend remains the authorization boundary.
+
+For frontend development, start the backend on port `8080`, then run:
+
+```bash
+cd frontend
+npm run dev
+```
+
+Vite proxies `/api` to the backend. The production Nginx image uses the same paths inside Docker Compose.
+
 ## Run the local stack
 
 ### Prerequisites
