@@ -51,7 +51,7 @@ class DatabaseMigrationIntegrationTest {
 				ORDER BY installed_rank
 				""", String.class);
 
-		assertThat(appliedVersions).contains("1", "2", "3", "4", "5");
+		assertThat(appliedVersions).contains("1", "2", "3", "4", "5", "6");
 	}
 
 	@Test
@@ -60,13 +60,71 @@ class DatabaseMigrationIntegrationTest {
 				SELECT table_name
 				FROM information_schema.tables
 				WHERE table_schema = 'public'
-				  AND table_name IN ('app_users', 'experiment_configs', 'molecular_inputs', 'project_members', 'projects')
+				  AND table_name IN (
+				      'app_users', 'experiment_configs', 'idempotency_records', 'job_events',
+				      'jobs', 'molecular_inputs', 'outbox_events', 'project_members', 'projects'
+				  )
 				ORDER BY table_name
 				""", String.class);
 
 		assertThat(tables).containsExactly(
-				"app_users", "experiment_configs", "molecular_inputs", "project_members", "projects"
+				"app_users", "experiment_configs", "idempotency_records", "job_events",
+				"jobs", "molecular_inputs", "outbox_events", "project_members", "projects"
 		);
+	}
+
+	@Test
+	void jobSubmissionTablesEnforceReliabilityConstraints() {
+		List<String> jobConstraints = constraintsFor("jobs");
+		assertThat(jobConstraints).contains(
+				"chk_jobs_status",
+				"chk_jobs_spec_snapshot_object",
+				"chk_jobs_max_attempts",
+				"chk_jobs_version",
+				"fk_jobs_project",
+				"fk_jobs_molecular_input",
+				"fk_jobs_experiment_config",
+				"fk_jobs_submitted_by"
+		);
+
+		List<String> idempotencyConstraints = constraintsFor("idempotency_records");
+		assertThat(idempotencyConstraints).contains(
+				"uq_idempotency_records_scope_key",
+				"uq_idempotency_records_job",
+				"chk_idempotency_records_request_hash"
+		);
+
+		List<String> eventConstraints = constraintsFor("job_events");
+		assertThat(eventConstraints).contains(
+				"fk_job_events_job",
+				"chk_job_events_from_status",
+				"chk_job_events_to_status",
+				"chk_job_events_state_change"
+		);
+	}
+
+	@Test
+	void outboxHasACompactUnpublishedEventIndex() {
+		String indexDefinition = jdbcTemplate.queryForObject("""
+				SELECT indexdef
+				FROM pg_indexes
+				WHERE schemaname = 'public'
+				  AND tablename = 'outbox_events'
+				  AND indexname = 'idx_outbox_events_unpublished'
+				""", String.class);
+
+		assertThat(indexDefinition)
+				.contains("available_at", "id")
+				.containsIgnoringCase("WHERE (published_at IS NULL)");
+	}
+
+	private List<String> constraintsFor(String tableName) {
+		return jdbcTemplate.queryForList("""
+				SELECT constraint_name
+				FROM information_schema.table_constraints
+				WHERE table_schema = 'public'
+				  AND table_name = ?
+				""", String.class, tableName);
 	}
 
 	@Test

@@ -54,7 +54,7 @@ A **Job** represents the computation requested by a user. An **Attempt** represe
 
 ### Transactional outbox
 
-Creating a job and recording its pending message will happen in the same PostgreSQL transaction. This prevents a committed `QUEUED` job from being silently lost if RabbitMQ is unavailable between the database write and message publication.
+Creating a job and recording its pending message happens in the same PostgreSQL transaction. This prevents a committed `QUEUED` job from being silently lost if RabbitMQ is unavailable between the database write and message publication. The publisher that delivers pending events to RabbitMQ is planned for Week 3 Day 3; submissions currently remain queued in PostgreSQL.
 
 ### Lease and fencing token
 
@@ -153,6 +153,25 @@ Content-Type: application/json
 ```
 
 Posting the same name again creates the next version; it never updates an existing row. Project members can inspect every version with `GET /api/projects/{projectId}/configs` or fetch one through `GET /api/projects/{projectId}/configs/{configId}`. The version 1 contract is published at `backend/src/main/resources/schemas/experiment-config-v1.schema.json`.
+
+### Idempotent job submission
+
+Project owners, maintainers, and members can submit a job using an input and configuration from the same project:
+
+```http
+POST /api/jobs
+Authorization: Bearer <access-token>
+Idempotency-Key: <client-generated-unique-key>
+Content-Type: application/json
+
+{
+  "projectId": 1,
+  "molecularInputId": 2,
+  "experimentConfigId": 3
+}
+```
+
+The first request creates a `QUEUED` job, an idempotency record, a pending outbox event, and a job audit event in one transaction. The response is `201 Created` with `Location: /api/jobs/{id}`. Reusing the key in the same user/project scope with the same semantic request returns the original `201` response; reusing it with different IDs returns `409 IDEMPOTENCY_KEY_REUSED`. JSON property order and whitespace do not affect the request hash, and unsupported fields are rejected. A job submission stores an immutable snapshot of the input and configuration; RabbitMQ publication and execution are not yet implemented.
 
 ### Web workspace
 

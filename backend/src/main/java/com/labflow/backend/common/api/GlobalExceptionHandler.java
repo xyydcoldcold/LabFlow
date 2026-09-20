@@ -9,6 +9,8 @@ import com.labflow.backend.auth.EmailAlreadyRegisteredException;
 import com.labflow.backend.auth.InvalidCredentialsException;
 import com.labflow.backend.experimentconfig.ExperimentConfigNotFoundException;
 import com.labflow.backend.experimentconfig.InvalidExperimentConfigException;
+import com.labflow.backend.job.IdempotencyKeyReusedException;
+import com.labflow.backend.job.JobResourceNotFoundException;
 import com.labflow.backend.molecularinput.InvalidMolecularInputException;
 import com.labflow.backend.molecularinput.MolecularInputNotFoundException;
 import com.labflow.backend.molecularinput.MolecularInputReadException;
@@ -23,6 +25,7 @@ import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingRequestHeaderException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
@@ -116,6 +119,22 @@ public class GlobalExceptionHandler {
         return error(HttpStatus.BAD_REQUEST, "INVALID_EXPERIMENT_CONFIG", exception.getMessage(), request);
     }
 
+    @ExceptionHandler(IdempotencyKeyReusedException.class)
+    ResponseEntity<ApiErrorResponse> handleIdempotencyKeyReused(
+            IdempotencyKeyReusedException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.CONFLICT, "IDEMPOTENCY_KEY_REUSED", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(JobResourceNotFoundException.class)
+    ResponseEntity<ApiErrorResponse> handleJobResourceNotFound(
+            JobResourceNotFoundException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.NOT_FOUND, "JOB_RESOURCE_NOT_FOUND", exception.getMessage(), request);
+    }
+
     @ExceptionHandler(InvalidMolecularInputException.class)
     ResponseEntity<ApiErrorResponse> handleInvalidMolecularInput(
             InvalidMolecularInputException exception,
@@ -173,6 +192,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler({
             MethodArgumentNotValidException.class,
+            MissingRequestHeaderException.class,
             HttpMessageNotReadableException.class,
             IllegalArgumentException.class
     })
