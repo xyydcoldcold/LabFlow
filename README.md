@@ -54,7 +54,15 @@ A **Job** represents the computation requested by a user. An **Attempt** represe
 
 ### Transactional outbox
 
-Creating a job and recording its pending message happens in the same PostgreSQL transaction. This prevents a committed `QUEUED` job from being silently lost if RabbitMQ is unavailable between the database write and message publication. The publisher that delivers pending events to RabbitMQ is planned for Week 3 Day 3; submissions currently remain queued in PostgreSQL.
+Creating a job and recording its pending message happens in the same PostgreSQL transaction. This prevents a committed `QUEUED` job from being silently lost if RabbitMQ is unavailable between the database write and message publication. A scheduled publisher claims available rows with `FOR UPDATE SKIP LOCKED`, sends persistent messages, waits for correlated publisher confirms, and only then records `published_at`. Failed sends remain unpublished and use capped exponential backoff. A crash after broker confirmation but before the database update can publish a duplicate, which is intentional under the system's at-least-once contract.
+
+The version 1 broker message is deliberately small:
+
+```json
+{"jobId": 42, "eventId": 87, "schemaVersion": 1}
+```
+
+RabbitMQ declares a durable direct exchange, a durable quorum work queue, 15/60/300-second TTL retry queues, and a durable DLQ. Consumer acknowledgement mode is manual with an initial prefetch of one. Worker consumption and claim semantics begin in Week 4.
 
 ### Lease and fencing token
 
@@ -126,7 +134,7 @@ Example response:
 GET /actuator/health
 ```
 
-The Actuator response includes PostgreSQL health. RabbitMQ currently has its own Docker healthcheck and will join backend health when AMQP integration is implemented.
+The Actuator response includes PostgreSQL and RabbitMQ health. RabbitMQ also has its own Docker healthcheck.
 
 ### Versioned experiment configurations
 
@@ -171,7 +179,7 @@ Content-Type: application/json
 }
 ```
 
-The first request creates a `QUEUED` job, an idempotency record, a pending outbox event, and a job audit event in one transaction. The response is `201 Created` with `Location: /api/jobs/{id}`. Reusing the key in the same user/project scope with the same semantic request returns the original `201` response; reusing it with different IDs returns `409 IDEMPOTENCY_KEY_REUSED`. JSON property order and whitespace do not affect the request hash, and unsupported fields are rejected. A job submission stores an immutable snapshot of the input and configuration; RabbitMQ publication and execution are not yet implemented.
+The first request creates a `QUEUED` job, an idempotency record, a pending outbox event, and a job audit event in one transaction. The response is `201 Created` with `Location: /api/jobs/{id}`. Reusing the key in the same user/project scope with the same semantic request returns the original `201` response; reusing it with different IDs returns `409 IDEMPOTENCY_KEY_REUSED`. JSON property order and whitespace do not affect the request hash, and unsupported fields are rejected. A job submission stores an immutable snapshot of the input and configuration. The outbox publisher reliably delivers its execution signal to RabbitMQ; Worker execution is not yet implemented.
 
 ### Web workspace
 
@@ -239,7 +247,7 @@ python3 -m pytest
 - Gradle Kotlin DSL
 - JUnit 5
 - PostgreSQL 17 and Flyway
-- RabbitMQ 4 Management (local infrastructure)
+- RabbitMQ 4, Spring AMQP, publisher confirms, retry queues, and DLQ topology
 - Python 3.12+ worker package and pytest
 - React 19, TypeScript, and Vite
 - Docker Compose

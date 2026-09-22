@@ -72,6 +72,10 @@ services:
       AUTH_JWT_TTL: ${AUTH_JWT_TTL:-PT1H}
       ARTIFACT_ROOT: /var/lib/labflow/artifacts
       ARTIFACT_MAX_UPLOAD_SIZE: ${ARTIFACT_MAX_UPLOAD_SIZE:-1MB}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_PORT: 5672
+      RABBITMQ_USERNAME: ${RABBITMQ_DEFAULT_USER:-labflow}
+      RABBITMQ_PASSWORD: ${RABBITMQ_DEFAULT_PASS:-labflow_dev_password}
     ports:
       - "${BACKEND_PORT:-8080}:8080"
     volumes:

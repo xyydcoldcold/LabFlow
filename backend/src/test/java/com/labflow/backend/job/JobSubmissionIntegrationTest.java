@@ -37,7 +37,10 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.postgresql.PostgreSQLContainer;
 
 @Testcontainers
-@SpringBootTest(classes = BackendApplication.class)
+@SpringBootTest(
+        classes = BackendApplication.class,
+        properties = "labflow.outbox.publisher.enabled=false"
+)
 @AutoConfigureMockMvc
 class JobSubmissionIntegrationTest {
 
