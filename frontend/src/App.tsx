@@ -11,12 +11,14 @@ import {
   formatDate,
   MembershipRole,
   MolecularInput,
+  JobDetails,
+  JobSummary,
   Project,
   ProjectMember,
 } from "./api";
 import "./styles.css";
 
-type WorkspaceTab = "inputs" | "configs" | "members";
+type WorkspaceTab = "jobs" | "inputs" | "configs" | "members";
 
 const TOKEN_KEY = "labflow.accessToken";
 const membershipRoles: MembershipRole[] = ["MAINTAINER", "MEMBER", "VIEWER"];
@@ -268,14 +270,20 @@ function WelcomeEmpty({ onCreate }: { onCreate: () => void }) {
 }
 
 function ProjectWorkspace({ token, project }: { token: string; project: Project }) {
-  const [tab, setTab] = useState<WorkspaceTab>("inputs");
+  const [tab, setTab] = useState<WorkspaceTab>("jobs");
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [inputs, setInputs] = useState<MolecularInput[]>([]);
   const [configs, setConfigs] = useState<ExperimentConfig[]>([]);
+  const [jobs, setJobs] = useState<JobSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
+  const updateJob = useCallback((updated: JobDetails) => {
+    setJobs((current) => current.map((job) => job.id === updated.id
+      ? { ...job, status: updated.status, updatedAt: updated.updatedAt }
+      : job));
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -285,12 +293,14 @@ function ProjectWorkspace({ token, project }: { token: string; project: Project 
       apiRequest<ProjectMember[]>(`/api/projects/${project.id}/members`, { token }),
       apiRequest<MolecularInput[]>(`/api/projects/${project.id}/inputs`, { token }),
       apiRequest<ExperimentConfig[]>(`/api/projects/${project.id}/configs`, { token }),
+      apiRequest<JobSummary[]>(`/api/projects/${project.id}/jobs`, { token }),
     ])
-      .then(([loadedMembers, loadedInputs, loadedConfigs]) => {
+      .then(([loadedMembers, loadedInputs, loadedConfigs, loadedJobs]) => {
         if (cancelled) return;
         setMembers(loadedMembers);
         setInputs(loadedInputs);
         setConfigs(loadedConfigs);
+        setJobs(loadedJobs);
       })
       .catch((requestError) => { if (!cancelled) setError(messageFrom(requestError)); })
       .finally(() => { if (!cancelled) setLoading(false); });
@@ -310,10 +320,11 @@ function ProjectWorkspace({ token, project }: { token: string; project: Project 
       <div className="metrics-row">
         <Metric value={inputs.length} label="Molecular inputs" />
         <Metric value={namedConfigCount} label="Named configs" />
+        <Metric value={jobs.length} label="Jobs" />
         <Metric value={members.length + 1} label="Team members" />
-        <Metric value={configs.length} label="Config versions" />
       </div>
       <nav className="tabs" aria-label="Project sections">
+        <TabButton name="jobs" current={tab} onSelect={setTab}>Jobs <span>{jobs.length}</span></TabButton>
         <TabButton name="inputs" current={tab} onSelect={setTab}>Inputs <span>{inputs.length}</span></TabButton>
         <TabButton name="configs" current={tab} onSelect={setTab}>Configurations <span>{configs.length}</span></TabButton>
         <TabButton name="members" current={tab} onSelect={setTab}>Members <span>{members.length + 1}</span></TabButton>
@@ -321,6 +332,7 @@ function ProjectWorkspace({ token, project }: { token: string; project: Project 
       {error && <div className="page-error" role="alert"><strong>Workspace could not be loaded.</strong><span>{error}</span><button onClick={refresh}>Retry</button></div>}
       {loading ? <ContentSkeleton /> : (
         <>
+          {tab === "jobs" && <JobsPanel token={token} jobs={jobs} onJobUpdated={updateJob} />}
           {tab === "inputs" && <InputsPanel token={token} projectId={project.id} inputs={inputs} canContribute={canContribute} onChanged={refresh} />}
           {tab === "configs" && <ConfigsPanel token={token} projectId={project.id} configs={configs} canContribute={canContribute} onChanged={refresh} />}
           {tab === "members" && <MembersPanel token={token} project={project} members={members} canManage={canManageMembers} onChanged={refresh} />}
@@ -328,6 +340,65 @@ function ProjectWorkspace({ token, project }: { token: string; project: Project 
       )}
     </div>
   );
+}
+
+function JobsPanel({ token, jobs, onJobUpdated }: { token: string; jobs: JobSummary[]; onJobUpdated: (job: JobDetails) => void }) {
+  const [selectedId, setSelectedId] = useState<number | null>(jobs[0]?.id ?? null);
+  const [details, setDetails] = useState<JobDetails | null>(null);
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    if (jobs.length === 0) { setSelectedId(null); setDetails(null); return; }
+    if (!jobs.some((job) => job.id === selectedId)) setSelectedId(jobs[0]!.id);
+  }, [jobs, selectedId]);
+
+  useEffect(() => {
+    if (selectedId === null) return;
+    let cancelled = false;
+    let timer: number | undefined;
+    const load = async () => {
+      try {
+        const job = await apiRequest<JobDetails>(`/api/jobs/${selectedId}`, { token });
+        if (cancelled) return;
+        setDetails(job); setError(""); onJobUpdated(job);
+        if (job.status === "QUEUED" || job.status === "RUNNING") timer = window.setTimeout(load, 2_000);
+      } catch (requestError) { if (!cancelled) setError(messageFrom(requestError)); }
+    };
+    void load();
+    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
+  }, [onJobUpdated, selectedId, token]);
+
+  if (jobs.length === 0) return <section className="content-card main-card"><EmptyList title="No jobs yet" text="Submitted calculations will appear here with live status, logs, and results." /></section>;
+  const summary = details?.result?.summary;
+  const latestAttempt = details?.attempts.at(-1);
+  return <section className="jobs-layout">
+    <div className="content-card job-list-card">
+      <div className="card-heading"><div><span className="eyebrow">Execution history</span><h2>Jobs</h2></div></div>
+      <div className="job-list">{jobs.map((job) => <button key={job.id} className={job.id === selectedId ? "job-row active" : "job-row"} onClick={() => setSelectedId(job.id)}>
+        <span><strong>Job #{job.id}</strong><small>{formatDate(job.createdAt)}</small></span><StatusBadge status={job.id === details?.id ? details.status : job.status} />
+      </button>)}</div>
+    </div>
+    <div className="content-card job-detail-card">
+      {error && <div className="inline-error">{error}</div>}
+      {!details || details.id !== selectedId ? <ContentSkeleton /> : <>
+        <div className="job-detail-heading"><div><span className="eyebrow">Job #{details.id}</span><h2>{details.specSnapshot.experimentConfig?.name ?? "Calculation"}</h2><p>{details.specSnapshot.molecularInput?.originalFilename ?? `Input #${details.molecularInputId}`}</p></div><StatusBadge status={details.status} /></div>
+        <dl className="job-facts"><div><dt>Attempt</dt><dd>{latestAttempt?.attemptNo ?? "Waiting"}</dd></div><div><dt>Worker</dt><dd>{latestAttempt?.workerInstance ?? "Unassigned"}</dd></div><div><dt>Method</dt><dd>{details.specSnapshot.experimentConfig?.spec?.method ?? "—"}</dd></div><div><dt>Basis</dt><dd>{details.specSnapshot.experimentConfig?.spec?.basis ?? "—"}</dd></div></dl>
+        {summary && <div className="result-panel"><span className="eyebrow">Result</span><div className="result-grid">
+          {summary.energyHartree !== undefined && <div><small>Energy</small><strong>{Number(summary.energyHartree).toFixed(10)} Eh</strong></div>}
+          {summary.converged !== undefined && <div><small>Converged</small><strong>{summary.converged ? "Yes" : "No"}</strong></div>}
+          {summary.durationSeconds !== undefined && <div><small>Runtime</small><strong>{Number(summary.durationSeconds).toFixed(2)}s</strong></div>}
+        </div></div>}
+        {latestAttempt?.failure && <div className="inline-error"><strong>{String(latestAttempt.failure.code ?? "Task failed")}</strong><br />{String(latestAttempt.failure.message ?? "The worker reported a failure.")}</div>}
+        <div className="log-heading"><span className="eyebrow">Worker log</span><small>{details.logs.length} chunks</small></div>
+        <pre className="job-log">{details.logs.length ? details.logs.map((log) => `[${log.stream}] ${log.content}`).join("") : "Waiting for worker output…"}</pre>
+        {details.result && <details className="manifest"><summary>Reproducibility manifest</summary><pre>{JSON.stringify(details.result.manifest, null, 2)}</pre></details>}
+      </>}
+    </div>
+  </section>;
+}
+
+function StatusBadge({ status }: { status: JobSummary["status"] }) {
+  return <span className={`status-badge status-${status.toLowerCase()}`}><i />{status}</span>;
 }
 
 function Metric({ value, label }: { value: number; label: string }) {

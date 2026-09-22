@@ -2,7 +2,7 @@
 
 > A reliable distributed job platform for reproducible scientific computing.
 
-LabFlow is a portfolio project for laboratory teams that need to submit, run, observe, and compare scientific computing jobs. The planned system accepts validated molecular inputs and versioned PySCF configurations, dispatches work to Python workers, streams execution logs, and preserves enough provenance to explain and reproduce every result.
+LabFlow is a portfolio project for laboratory teams that need to submit, run, observe, and compare scientific computing jobs. The system accepts validated molecular inputs and versioned PySCF configurations, dispatches work to Python workers, streams execution logs, and preserves enough provenance to explain and reproduce every result.
 
 The central engineering problem is reliability rather than raw job volume. LabFlow is designed around RabbitMQ's **at-least-once delivery**: a job may be executed more than once after a failure, but leases, attempt tokens, and a database uniqueness constraint ensure that only one valid final result is accepted.
 
@@ -42,9 +42,9 @@ The intended execution flow is:
 1. The API creates a job, an idempotency record, and an outbox event in one database transaction.
 2. The outbox publisher sends the job ID to RabbitMQ.
 3. A worker consumes the message and atomically claims a new job attempt.
-4. The worker renews its lease, uploads ordered log chunks, and runs a whitelisted task.
+4. The worker uploads ordered log chunks and runs a whitelisted task in an isolated subprocess.
 5. The backend accepts the result only when the attempt token is still active.
-6. If the lease expires, the old attempt becomes `LOST` and the job is queued for a new attempt.
+6. A later recovery stage will expire abandoned leases, mark attempts `LOST`, and queue another attempt.
 
 ## Planned reliability model
 
@@ -62,15 +62,15 @@ The version 1 broker message is deliberately small:
 {"jobId": 42, "eventId": 87, "schemaVersion": 1}
 ```
 
-RabbitMQ declares a durable direct exchange, a durable quorum work queue, 15/60/300-second TTL retry queues, and a durable DLQ. Consumer acknowledgement mode is manual with an initial prefetch of one. Worker consumption and claim semantics begin in Week 4.
+RabbitMQ declares a durable direct exchange, a durable quorum work queue, 15/60/300-second TTL retry queues, and a durable DLQ. Workers consume manually with prefetch one, claim jobs through the protected backend API, and acknowledge messages only after the backend confirms a terminal result.
 
 ### Lease and fencing token
 
-Each claimed attempt receives a short-lived lease and a unique token. The worker renews the lease with heartbeats. Once the lease expires, late heartbeats, logs, or results from that attempt are rejected as `STALE_ATTEMPT`.
+Each claimed attempt receives a lease and a unique fencing token. Every log and terminal result write must present that token, and writes from a non-active attempt are rejected as `STALE_ATTEMPT`. Lease renewal and automatic abandoned-attempt recovery are the next reliability stage.
 
 ### Unique final result
 
-The planned `job_result` schema has a unique constraint on `job_id`. Combined with transactional token validation, it acts as the final safeguard against duplicate or late result commits.
+The `job_results` table has a primary key on `job_id` and a unique attempt constraint. Combined with transactional token validation, it is the final safeguard against duplicate or late result commits.
 
 ## Implemented API
 
@@ -179,11 +179,27 @@ Content-Type: application/json
 }
 ```
 
-The first request creates a `QUEUED` job, an idempotency record, a pending outbox event, and a job audit event in one transaction. The response is `201 Created` with `Location: /api/jobs/{id}`. Reusing the key in the same user/project scope with the same semantic request returns the original `201` response; reusing it with different IDs returns `409 IDEMPOTENCY_KEY_REUSED`. JSON property order and whitespace do not affect the request hash, and unsupported fields are rejected. A job submission stores an immutable snapshot of the input and configuration. The outbox publisher reliably delivers its execution signal to RabbitMQ; Worker execution is not yet implemented.
+The first request creates a `QUEUED` job, an idempotency record, a pending outbox event, and a job audit event in one transaction. The response is `201 Created` with `Location: /api/jobs/{id}`. Reusing the key in the same user/project scope with the same semantic request returns the original `201` response; reusing it with different IDs returns `409 IDEMPOTENCY_KEY_REUSED`. JSON property order and whitespace do not affect the request hash, and unsupported fields are rejected. A job submission stores an immutable snapshot of the input and configuration. The outbox publisher reliably delivers its execution signal to RabbitMQ, where a registered worker claims and executes it.
+
+### Worker execution and observation
+
+Workers authenticate to `/internal/**` with a dedicated service token, register their image digest and explicit capabilities, then atomically claim a fenced job attempt. They never execute broker-provided commands: the broker carries only IDs, and task dispatch is limited to the `demo.sleep_hash` and `pyscf.single_point` registry entries. Tasks run without a shell in a separate process group with a reduced environment, a wall-clock timeout, CPU limits, and a Linux address-space limit.
+
+`pyscf.single_point` validates the immutable input checksum, parses XYZ coordinates, executes the configured SCF calculation, and records energy, convergence, timing, PySCF/Python/platform versions, image identity, spec hash, and artifact metadata. Ordered stdout/stderr/system chunks are persisted idempotently and exposed through both the job detail response and resumable SSE:
+
+```http
+GET /api/projects/{projectId}/jobs
+GET /api/jobs/{jobId}
+GET /api/jobs/{jobId}/events
+Authorization: Bearer <access-token>
+Last-Event-ID: <last-seen-log-id>
+```
+
+Set `WORKER_SERVICE_TOKEN` to the same random value of at least 32 bytes for the backend and workers outside local development.
 
 ### Web workspace
 
-The React workspace now provides the minimum Week 2 workflow: registration and login, visible-project selection, owner-only membership management, validated XYZ upload, and immutable experiment-config creation. Controls reflect the current project role, while the backend remains the authorization boundary.
+The React workspace provides registration and login, visible-project selection, owner-only membership management, validated XYZ upload, immutable configuration creation, and a job view with status, attempt, live-polled logs, result energy, failures, and reproducibility manifest. Controls reflect the current project role, while the backend remains the authorization boundary.
 
 For frontend development, start the backend on port `8080`, then run:
 
@@ -248,7 +264,8 @@ python3 -m pytest
 - JUnit 5
 - PostgreSQL 17 and Flyway
 - RabbitMQ 4, Spring AMQP, publisher confirms, retry queues, and DLQ topology
-- Python 3.12+ worker package and pytest
+- Python 3.12+ worker package, PySCF, Pika, and pytest
+- Server-Sent Events (SSE) log streaming
 - React 19, TypeScript, and Vite
 - Docker Compose
 - Testcontainers
@@ -256,16 +273,15 @@ python3 -m pytest
 
 ### Selected for upcoming stages
 
-- Spring AMQP and the transactional Outbox
-- PySCF task execution
-- Server-Sent Events (SSE)
+- Lease renewal and abandoned-attempt recovery
+- Fault injection and retry orchestration
 
 ## Repository layout
 
 ```text
 LabFlow/
 ├── backend/                 # Spring Boot API and Flyway migrations
-├── worker/                  # Python worker heartbeat scaffold
+├── worker/                  # Python RabbitMQ consumer and scientific task runtime
 ├── frontend/                # React/Vite scaffold served by Nginx
 ├── infra/                   # Reserved for broker and operational assets
 ├── tests/

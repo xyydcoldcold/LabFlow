@@ -11,6 +11,7 @@ import com.labflow.backend.experimentconfig.ExperimentConfigNotFoundException;
 import com.labflow.backend.experimentconfig.InvalidExperimentConfigException;
 import com.labflow.backend.job.IdempotencyKeyReusedException;
 import com.labflow.backend.job.JobResourceNotFoundException;
+import com.labflow.backend.job.JobNotFoundException;
 import com.labflow.backend.molecularinput.InvalidMolecularInputException;
 import com.labflow.backend.molecularinput.MolecularInputNotFoundException;
 import com.labflow.backend.molecularinput.MolecularInputReadException;
@@ -20,6 +21,10 @@ import com.labflow.backend.project.ProjectMemberAlreadyExistsException;
 import com.labflow.backend.project.ProjectMemberNotFoundException;
 import com.labflow.backend.project.ProjectMemberUserNotFoundException;
 import com.labflow.backend.project.ProjectNotFoundException;
+import com.labflow.backend.worker.AttemptNotFoundException;
+import com.labflow.backend.worker.JobNotClaimableException;
+import com.labflow.backend.worker.StaleAttemptException;
+import com.labflow.backend.worker.WorkerNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
@@ -133,6 +138,30 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         return error(HttpStatus.NOT_FOUND, "JOB_RESOURCE_NOT_FOUND", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler({JobNotFoundException.class, AttemptNotFoundException.class, WorkerNotFoundException.class})
+    ResponseEntity<ApiErrorResponse> handleWorkerResourceNotFound(
+            RuntimeException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.NOT_FOUND, "RESOURCE_NOT_FOUND", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(JobNotClaimableException.class)
+    ResponseEntity<ApiErrorResponse> handleJobNotClaimable(
+            JobNotClaimableException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.CONFLICT, "JOB_NOT_CLAIMABLE", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(StaleAttemptException.class)
+    ResponseEntity<ApiErrorResponse> handleStaleAttempt(
+            StaleAttemptException exception,
+            HttpServletRequest request
+    ) {
+        return error(HttpStatus.CONFLICT, "STALE_ATTEMPT", exception.getMessage(), request);
     }
 
     @ExceptionHandler(InvalidMolecularInputException.class)

@@ -62,6 +62,37 @@ export interface ExperimentConfig {
   createdAt: string;
 }
 
+export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELLED";
+
+export interface JobSummary {
+  id: number; projectId: number; molecularInputId: number; experimentConfigId: number;
+  status: JobStatus; createdAt: string; updatedAt: string;
+}
+
+export interface JobAttempt {
+  id: number; attemptNo: number; status: string; workerId: number; workerInstance: string;
+  startedAt: string; finishedAt: string | null; failure: Record<string, unknown> | null;
+}
+
+export interface JobLogChunk {
+  id: number; attemptId: number; seqNo: number; stream: "STDOUT" | "STDERR" | "SYSTEM";
+  emittedAt: string; content: string;
+}
+
+export interface JobResult {
+  attemptId: number; summary: Record<string, unknown>; manifest: Record<string, unknown>; completedAt: string;
+}
+
+export interface JobDetails extends JobSummary {
+  specSnapshot: {
+    molecularInput?: { originalFilename?: string; sha256?: string };
+    experimentConfig?: { name?: string; version?: number; spec?: ExperimentSpec };
+  };
+  attempts: JobAttempt[];
+  logs: JobLogChunk[];
+  result: JobResult | null;
+}
+
 interface ApiErrorBody {
   status?: number;
   code?: string;

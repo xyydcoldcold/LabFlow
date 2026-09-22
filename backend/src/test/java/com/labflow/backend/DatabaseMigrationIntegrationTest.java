@@ -51,7 +51,7 @@ class DatabaseMigrationIntegrationTest {
 				ORDER BY installed_rank
 				""", String.class);
 
-		assertThat(appliedVersions).contains("1", "2", "3", "4", "5", "6");
+		assertThat(appliedVersions).contains("1", "2", "3", "4", "5", "6", "7");
 	}
 
 	@Test
@@ -62,15 +62,39 @@ class DatabaseMigrationIntegrationTest {
 				WHERE table_schema = 'public'
 				  AND table_name IN (
 				      'app_users', 'experiment_configs', 'idempotency_records', 'job_events',
-				      'jobs', 'molecular_inputs', 'outbox_events', 'project_members', 'projects'
+				      'jobs', 'molecular_inputs', 'outbox_events', 'project_members', 'projects',
+				      'workers', 'job_attempts', 'job_log_chunks', 'job_results'
 				  )
 				ORDER BY table_name
 				""", String.class);
 
 		assertThat(tables).containsExactly(
-				"app_users", "experiment_configs", "idempotency_records", "job_events",
-				"jobs", "molecular_inputs", "outbox_events", "project_members", "projects"
+				"app_users", "experiment_configs", "idempotency_records", "job_attempts",
+				"job_events", "job_log_chunks", "job_results", "jobs", "molecular_inputs",
+				"outbox_events", "project_members", "projects", "workers"
 		);
+	}
+
+	@Test
+	void workerExecutionTablesEnforceAttemptLogAndResultUniqueness() {
+		assertThat(constraintsFor("workers")).contains("uq_workers_instance_name");
+		assertThat(constraintsFor("job_attempts")).contains(
+				"uq_job_attempts_job_number", "uq_job_attempts_token",
+				"chk_job_attempts_status", "fk_job_attempts_job", "fk_job_attempts_worker"
+		);
+		assertThat(constraintsFor("job_log_chunks")).contains(
+				"uq_job_log_chunks_attempt_seq", "chk_job_log_chunks_stream",
+				"fk_job_log_chunks_job", "fk_job_log_chunks_attempt"
+		);
+		assertThat(constraintsFor("job_results")).contains(
+				"uq_job_results_attempt", "fk_job_results_job", "fk_job_results_attempt"
+		);
+		String activeAttemptIndex = jdbcTemplate.queryForObject("""
+				SELECT indexdef FROM pg_indexes
+				WHERE schemaname = 'public' AND tablename = 'job_attempts'
+				  AND indexname = 'uq_job_attempts_active_job'
+				""", String.class);
+		assertThat(activeAttemptIndex).containsIgnoringCase("UNIQUE").contains("status", "ACTIVE");
 	}
 
 	@Test

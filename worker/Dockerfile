@@ -22,7 +22,7 @@ WORKDIR /app
 COPY pyproject.toml pyproject.toml
 COPY src src
 
-RUN python -m pip install --no-cache-dir .
+RUN python -m pip install --no-cache-dir --prefer-binary ".[science]"
 
 USER labflow
 
