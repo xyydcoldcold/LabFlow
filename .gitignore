@@ -14,6 +14,9 @@ data/
 !**/src/test/**/build/
 LabFlow_Project_Implementation_Report_CN.docx
 .env
+playwright-report/
+test-results/
+/docs/WEEK4_ACCEPTANCE.md
 
 ### Operating System ###
 .DS_Store

@@ -50,6 +50,7 @@ def run_pyscf_single_point(
     from pyscf import dft, gto, scf
 
     molecule = gto.M(
+        dump_input=False,
         atom=atom_block,
         unit="Angstrom",
         basis=basis,
@@ -91,7 +92,7 @@ def run_pyscf_single_point(
         },
         "manifest": _manifest(
             "pyscf.single_point", input_path, actual_sha, spec, image_digest, duration,
-            {"pyscf": importlib.metadata.version("pyscf")},
+            {package: importlib.metadata.version(package) for package in ("pyscf", "numpy", "scipy", "h5py")},
         ),
     }
 

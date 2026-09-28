@@ -107,6 +107,16 @@ class WorkerExecutionIntegrationTest {
         assertThat(replayedLogId).isEqualTo(firstLogId);
         assertThat(logStreamService.loadAfter(jobId, 0)).hasSize(1);
 
+        // Scientific runners emit blank lines; preserve them without rejecting the attempt.
+        workerPost("/internal/attempts/" + attemptId + "/logs", """
+                {"seqNo":1,"stream":"STDOUT","emittedAt":"2026-09-21T12:00:01Z","content":"\\n"}
+                """, attemptToken, 201);
+        assertThat(logStreamService.loadAfter(jobId, firstLogId))
+                .singleElement().extracting(chunk -> chunk.content()).isEqualTo("\n");
+        workerPost("/internal/attempts/" + attemptId + "/logs", """
+                {"seqNo":2,"stream":"STDOUT","emittedAt":"2026-09-21T12:00:02Z","content":""}
+                """, attemptToken, 400);
+
         String result = """
                 {
                   "summary":{"energyHartree":-1.1167593074,"converged":true,"durationSeconds":0.42},

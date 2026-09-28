@@ -1,4 +1,4 @@
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import {
   ApiError,
@@ -16,6 +16,7 @@ import {
   Project,
   ProjectMember,
 } from "./api";
+import { streamJobLogs } from "./job-stream";
 import "./styles.css";
 
 type WorkspaceTab = "jobs" | "inputs" | "configs" | "members";
@@ -235,7 +236,7 @@ function Dashboard(props: DashboardProps) {
       </aside>
 
       <section className="main-stage">
-        {selectedProject ? <ProjectWorkspace token={token} project={selectedProject} /> : <WelcomeEmpty onCreate={() => setShowCreateProject(true)} />}
+        {selectedProject ? <ProjectWorkspace key={selectedProject.id} token={token} project={selectedProject} /> : <WelcomeEmpty onCreate={() => setShowCreateProject(true)} />}
       </section>
 
       {showCreateProject && (
@@ -332,7 +333,7 @@ function ProjectWorkspace({ token, project }: { token: string; project: Project 
       {error && <div className="page-error" role="alert"><strong>Workspace could not be loaded.</strong><span>{error}</span><button onClick={refresh}>Retry</button></div>}
       {loading ? <ContentSkeleton /> : (
         <>
-          {tab === "jobs" && <JobsPanel token={token} jobs={jobs} onJobUpdated={updateJob} />}
+          {tab === "jobs" && <JobsPanel token={token} projectId={project.id} inputs={inputs} configs={configs} canContribute={canContribute} jobs={jobs} onJobUpdated={updateJob} onJobCreated={(job) => setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)])} />}
           {tab === "inputs" && <InputsPanel token={token} projectId={project.id} inputs={inputs} canContribute={canContribute} onChanged={refresh} />}
           {tab === "configs" && <ConfigsPanel token={token} projectId={project.id} configs={configs} canContribute={canContribute} onChanged={refresh} />}
           {tab === "members" && <MembersPanel token={token} project={project} members={members} canManage={canManageMembers} onChanged={refresh} />}
@@ -342,10 +343,15 @@ function ProjectWorkspace({ token, project }: { token: string; project: Project 
   );
 }
 
-function JobsPanel({ token, jobs, onJobUpdated }: { token: string; jobs: JobSummary[]; onJobUpdated: (job: JobDetails) => void }) {
+function JobsPanel({ token, projectId, inputs, configs, canContribute, jobs, onJobUpdated, onJobCreated }: {
+  token: string; projectId: number; inputs: MolecularInput[]; configs: ExperimentConfig[];
+  canContribute: boolean; jobs: JobSummary[]; onJobUpdated: (job: JobDetails) => void;
+  onJobCreated: (job: JobSummary) => void;
+}) {
   const [selectedId, setSelectedId] = useState<number | null>(jobs[0]?.id ?? null);
   const [details, setDetails] = useState<JobDetails | null>(null);
   const [error, setError] = useState("");
+  const [streamState, setStreamState] = useState("Connecting live logs…");
 
   useEffect(() => {
     if (jobs.length === 0) { setSelectedId(null); setDetails(null); return; }
@@ -356,22 +362,42 @@ function JobsPanel({ token, jobs, onJobUpdated }: { token: string; jobs: JobSumm
     if (selectedId === null) return;
     let cancelled = false;
     let timer: number | undefined;
+    const controller = new AbortController();
+    let streaming = false;
     const load = async () => {
       try {
         const job = await apiRequest<JobDetails>(`/api/jobs/${selectedId}`, { token });
         if (cancelled) return;
-        setDetails(job); setError(""); onJobUpdated(job);
-        if (job.status === "QUEUED" || job.status === "RUNNING") timer = window.setTimeout(load, 2_000);
-      } catch (requestError) { if (!cancelled) setError(messageFrom(requestError)); }
+        setDetails((current) => {
+          const logs = new Map(job.logs.map((log) => [log.id, log]));
+          if (current?.id === job.id) for (const log of current.logs) logs.set(log.id, log);
+          return { ...job, logs: [...logs.values()].sort((a, b) => a.id - b.id) };
+        });
+        setError(""); onJobUpdated(job);
+        if (job.status === "QUEUED" || job.status === "RUNNING") {
+          if (!streaming) {
+            streaming = true;
+            setStreamState("Connecting live logs…");
+            void streamJobLogs(job.id, token, Math.max(0, ...job.logs.map((log) => log.id)), controller.signal,
+              (log) => { if (!cancelled) setDetails((current) => current?.id === job.id && !current.logs.some((item) => item.id === log.id)
+                ? { ...current, logs: [...current.logs, log].sort((a, b) => a.id - b.id) } : current); },
+              (state) => { if (!cancelled) setStreamState(state); });
+          }
+          timer = window.setTimeout(load, 2_000);
+        } else { controller.abort(); setStreamState("Saved logs"); }
+      } catch (requestError) {
+        if (!cancelled) { setError(messageFrom(requestError)); timer = window.setTimeout(load, 2_000); }
+      }
     };
     void load();
-    return () => { cancelled = true; if (timer !== undefined) window.clearTimeout(timer); };
+    return () => { cancelled = true; controller.abort(); if (timer !== undefined) window.clearTimeout(timer); };
   }, [onJobUpdated, selectedId, token]);
 
-  if (jobs.length === 0) return <section className="content-card main-card"><EmptyList title="No jobs yet" text="Submitted calculations will appear here with live status, logs, and results." /></section>;
   const summary = details?.result?.summary;
   const latestAttempt = details?.attempts.at(-1);
-  return <section className="jobs-layout">
+  return <>
+    {canContribute ? <JobSubmissionForm token={token} projectId={projectId} inputs={inputs} configs={configs} onCreated={(job) => { onJobCreated(job); setSelectedId(job.id); }} /> : <ReadOnlyNote text="Your viewer role can inspect jobs and results. A project contributor can submit calculations." />}
+    {jobs.length === 0 ? <section className="content-card main-card"><EmptyList title="No jobs yet" text="Choose an input and configuration above to run your first calculation." /></section> : <section className="jobs-layout">
     <div className="content-card job-list-card">
       <div className="card-heading"><div><span className="eyebrow">Execution history</span><h2>Jobs</h2></div></div>
       <div className="job-list">{jobs.map((job) => <button key={job.id} className={job.id === selectedId ? "job-row active" : "job-row"} onClick={() => setSelectedId(job.id)}>
@@ -389,11 +415,54 @@ function JobsPanel({ token, jobs, onJobUpdated }: { token: string; jobs: JobSumm
           {summary.durationSeconds !== undefined && <div><small>Runtime</small><strong>{Number(summary.durationSeconds).toFixed(2)}s</strong></div>}
         </div></div>}
         {latestAttempt?.failure && <div className="inline-error"><strong>{String(latestAttempt.failure.code ?? "Task failed")}</strong><br />{String(latestAttempt.failure.message ?? "The worker reported a failure.")}</div>}
-        <div className="log-heading"><span className="eyebrow">Worker log</span><small>{details.logs.length} chunks</small></div>
+        <div className="log-heading"><span className="eyebrow">Worker log</span><small aria-live="polite">{streamState} · {details.logs.length} chunks</small></div>
         <pre className="job-log">{details.logs.length ? details.logs.map((log) => `[${log.stream}] ${log.content}`).join("") : "Waiting for worker output…"}</pre>
         {details.result && <details className="manifest"><summary>Reproducibility manifest</summary><pre>{JSON.stringify(details.result.manifest, null, 2)}</pre></details>}
       </>}
     </div>
+  </section>}
+  </>;
+}
+
+function JobSubmissionForm({ token, projectId, inputs, configs, onCreated }: {
+  token: string; projectId: number; inputs: MolecularInput[]; configs: ExperimentConfig[];
+  onCreated: (job: JobSummary) => void;
+}) {
+  const [inputId, setInputId] = useState(String(inputs[0]?.id ?? ""));
+  const [configId, setConfigId] = useState(String(configs[0]?.id ?? ""));
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const pending = useRef<{ key: string; body: { projectId: number; molecularInputId: number; experimentConfigId: number } } | null>(null);
+  const submitting = useRef(false);
+  const selectedConfig = configs.find((config) => String(config.id) === configId);
+  const ready = inputs.some((input) => String(input.id) === inputId) && selectedConfig !== undefined;
+
+  async function submit(event: FormEvent) {
+    event.preventDefault();
+    if (!ready || submitting.current) return;
+    const body = { projectId, molecularInputId: Number(inputId), experimentConfigId: Number(configId) };
+    // Preserve the key after an uncertain network response so Retry returns the same job.
+    if (!pending.current || JSON.stringify(pending.current.body) !== JSON.stringify(body)) pending.current = { key: crypto.randomUUID(), body };
+    submitting.current = true; setBusy(true); setError("");
+    try {
+      const job = await apiRequest<Omit<JobSummary, "updatedAt">>("/api/jobs", {
+        token, method: "POST", headers: { "Idempotency-Key": pending.current.key }, body,
+      });
+      pending.current = null;
+      onCreated({ ...job, updatedAt: job.createdAt });
+    } catch (requestError) { setError(messageFrom(requestError)); }
+    finally { submitting.current = false; setBusy(false); }
+  }
+
+  return <section className="content-card job-submit-card">
+    <div className="card-heading"><div><span className="eyebrow">New calculation</span><h2>Run an experiment</h2></div></div>
+    {!inputs.length || !configs.length ? <p className="muted">Upload a molecular input in Inputs and create a configuration in Configurations to submit a job.</p> : <form className="job-submit-form" onSubmit={submit}>
+      <label>Molecular input<select value={inputId} onChange={(event) => { setInputId(event.target.value); setError(""); }} disabled={busy} required>{inputs.map((input) => <option key={input.id} value={input.id}>{input.originalFilename} · #{input.id}</option>)}</select></label>
+      <label>Configuration version<select value={configId} onChange={(event) => { setConfigId(event.target.value); setError(""); }} disabled={busy} required>{configs.map((config) => <option key={config.id} value={config.id}>{config.name} · v{config.version} · {config.spec.method}/{config.spec.basis}</option>)}</select></label>
+      <button className="primary-button" disabled={busy || !ready}>{busy ? "Submitting…" : error ? "Retry submission" : "Submit job"}</button>
+      {selectedConfig && <p className="muted job-submit-summary">{selectedConfig.spec.method}/{selectedConfig.spec.basis} · Charge {selectedConfig.spec.charge} · Spin {selectedConfig.spec.spin} · Timeout {selectedConfig.spec.timeoutSeconds}s</p>}
+      {error && <div className="inline-error" role="alert">{error}</div>}
+    </form>}
   </section>;
 }
 

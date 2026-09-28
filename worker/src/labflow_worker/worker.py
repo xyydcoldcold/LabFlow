@@ -66,13 +66,19 @@ class Worker:
         attempt_token = str(claim["attemptToken"])
         logs = AttemptLogUploader(self.api, attempt_id, attempt_token)
         try:
-            logs.write("SYSTEM", f"Claimed job {claim['jobId']} as attempt {claim['attemptNo']}\n")
-            result = execute_task(claim, self.image_digest, logs.write)
+            with logs:
+                logs.write("SYSTEM", f"Claimed job {claim['jobId']} as attempt {claim['attemptNo']}\n")
+                result = execute_task(claim, self.image_digest, logs.write)
             self.api.succeed(attempt_id, attempt_token, result)
         except Exception as error:
             failure = _failure(error)
             try:
                 logs.write("SYSTEM", f"Task failed: {failure['code']}: {failure['message']}\n")
+                logs.flush()
+            except Exception:
+                # A failed log upload must not prevent persisting the task failure.
+                pass
+            try:
                 self.api.fail(attempt_id, attempt_token, failure)
             except ApiError:
                 channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)

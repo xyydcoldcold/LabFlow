@@ -37,6 +37,7 @@ class SuccessfulApi:
 
     def succeed(self, attempt_id: int, token: str, result: dict[str, Any]) -> dict[str, Any]:
         assert (attempt_id, token) == (9, "token")
+        assert self.logs, "Logs must be flushed before committing the terminal result"
         self.result = result
         return {"status": "SUCCEEDED"}
 

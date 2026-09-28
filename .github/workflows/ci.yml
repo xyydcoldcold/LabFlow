@@ -66,6 +66,9 @@ jobs:
       - name: Run TypeScript typecheck
         run: npm run typecheck
 
+      - name: Test resumable log streaming
+        run: npm test
+
   worker-tests:
     name: Worker tests
     runs-on: ubuntu-latest
@@ -113,3 +116,43 @@ jobs:
 
       - name: Build service images
         run: docker compose build
+
+  week4-e2e:
+    name: Week 4 scientific job acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    needs:
+      - backend-tests
+      - frontend-typecheck
+      - worker-tests
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install browser test dependencies
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Start the real stack
+        run: docker compose up --build --wait --wait-timeout 180
+      - name: Run H2 acceptance test
+        working-directory: frontend
+        run: npm run test:e2e
+      - name: Upload acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: week4-acceptance
+          path: frontend/test-results/
+          if-no-files-found: ignore
+      - name: Stop the test stack
+        if: always()
+        run: docker compose down

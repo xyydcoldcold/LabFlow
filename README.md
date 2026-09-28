@@ -2,6 +2,8 @@
 
 > A reliable distributed job platform for reproducible scientific computing.
 
+The implementation report's **Week 4 acceptance gate is complete**: a real H₂/RHF/STO-3G job can be submitted from the browser and inspected through execution, live logs, energy, and its reproducibility manifest. See [Week 4 acceptance](docs/WEEK4_ACCEPTANCE.md) for the repeatable checks. Week 5 focuses on heartbeat renewal, abandoned-attempt recovery, retries, and cancellation.
+
 LabFlow is a portfolio project for laboratory teams that need to submit, run, observe, and compare scientific computing jobs. The system accepts validated molecular inputs and versioned PySCF configurations, dispatches work to Python workers, streams execution logs, and preserves enough provenance to explain and reproduce every result.
 
 The central engineering problem is reliability rather than raw job volume. LabFlow is designed around RabbitMQ's **at-least-once delivery**: a job may be executed more than once after a failure, but leases, attempt tokens, and a database uniqueness constraint ensure that only one valid final result is accepted.
@@ -199,7 +201,7 @@ Set `WORKER_SERVICE_TOKEN` to the same random value of at least 32 bytes for the
 
 ### Web workspace
 
-The React workspace provides registration and login, visible-project selection, owner-only membership management, validated XYZ upload, immutable configuration creation, and a job view with status, attempt, live-polled logs, result energy, failures, and reproducibility manifest. Controls reflect the current project role, while the backend remains the authorization boundary.
+The React workspace provides registration and login, visible-project selection, owner-only membership management, validated XYZ upload, immutable configuration creation, and job submission using a selected input and configuration version. The job view shows status, attempt, live SSE logs, result energy, failures, and a reproducibility manifest. Log connections authenticate with the Bearer token and reconnect using `Last-Event-ID`; status and result metadata refresh every two seconds. Submission retries retain the same idempotency key after an uncertain network response. Controls reflect the current project role, while the backend remains the authorization boundary.
 
 For frontend development, start the backend on port `8080`, then run:
 
@@ -246,9 +248,21 @@ cd backend
 cd ../frontend
 npm ci
 npm run typecheck
+npm test
+npm run build
 cd ../worker
 python3 -m pytest
 ```
+
+With the Compose stack running, run the real browser acceptance flow:
+
+```bash
+cd frontend
+npx playwright install chromium
+npm run test:e2e
+```
+
+For a manual run, upload [`examples/h2.xyz`](examples/h2.xyz), create an RHF/`sto-3g` configuration with charge 0 and spin 0, then select both in Jobs and click **Submit job**. The expected converged energy is approximately **−1.1167593074 Hartree**.
 
 ## Technology stack
 
@@ -282,7 +296,7 @@ python3 -m pytest
 LabFlow/
 ├── backend/                 # Spring Boot API and Flyway migrations
 ├── worker/                  # Python RabbitMQ consumer and scientific task runtime
-├── frontend/                # React/Vite scaffold served by Nginx
+├── frontend/                # React workspace, SSE client, and browser acceptance tests
 ├── infra/                   # Reserved for broker and operational assets
 ├── tests/
 │   ├── fault-injection/     # Worker and dependency failure scenarios
