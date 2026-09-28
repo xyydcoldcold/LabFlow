@@ -2,7 +2,6 @@
 
 > A reliable distributed job platform for reproducible scientific computing.
 
-The implementation report's **Week 4 acceptance gate is complete**: a real H₂/RHF/STO-3G job can be submitted from the browser and inspected through execution, live logs, energy, and its reproducibility manifest. See [Week 4 acceptance](docs/WEEK4_ACCEPTANCE.md) for the repeatable checks. Week 5 focuses on heartbeat renewal, abandoned-attempt recovery, retries, and cancellation.
 
 LabFlow is a portfolio project for laboratory teams that need to submit, run, observe, and compare scientific computing jobs. The system accepts validated molecular inputs and versioned PySCF configurations, dispatches work to Python workers, streams execution logs, and preserves enough provenance to explain and reproduce every result.
 
