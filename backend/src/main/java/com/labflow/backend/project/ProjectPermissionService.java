@@ -40,9 +40,9 @@ public class ProjectPermissionService {
             return ProjectRole.OWNER;
         }
 
-        return projectMemberRepository.findByProject_IdAndUser_Id(projectId, userId)
-                .map(ProjectMember::getRole)
+        ProjectMember member = projectMemberRepository.findByProject_IdAndUser_Id(projectId, userId)
                 .orElseThrow(() -> new ProjectAccessDeniedException(projectId));
+        return member.getRole();
     }
 
     public ProjectRole requireView(long projectId, long userId) {

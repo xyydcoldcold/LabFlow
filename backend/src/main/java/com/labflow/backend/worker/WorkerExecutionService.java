@@ -63,7 +63,7 @@ public class WorkerExecutionService {
         String instanceName = request.instanceName().trim();
         String imageDigest = request.imageDigest().trim();
         List<String> capabilities = request.capabilities().stream()
-                .map(String::trim)
+                .map(capability -> capability.trim())
                 .distinct()
                 .sorted(Comparator.naturalOrder())
                 .toList();
@@ -71,7 +71,7 @@ public class WorkerExecutionService {
             throw new IllegalArgumentException("Worker advertised an unsupported capability");
         }
         String capabilitiesJson = JsonNodeFactory.instance.arrayNode()
-                .addAll(capabilities.stream().map(JsonNodeFactory.instance::textNode).toList())
+                .addAll(capabilities.stream().map(JsonNodeFactory.instance::stringNode).toList())
                 .toString();
         Instant now = clock.instant();
         return jdbcTemplate.queryForObject("""
