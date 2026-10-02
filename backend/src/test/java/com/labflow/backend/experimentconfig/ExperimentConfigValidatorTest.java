@@ -13,6 +13,18 @@ class ExperimentConfigValidatorTest {
     private final ExperimentConfigValidator validator = new ExperimentConfigValidator();
 
     @Test
+    void appliesDeploymentLimitsWithinTheSchema() {
+        ExperimentConfigValidator limited = new ExperimentConfigValidator(1024, 300);
+        assertThat(limited.validate(validSpec())).isNotNull();
+        assertThatThrownBy(() -> limited.validate(validSpec().put("maxMemoryMb", 2048)))
+                .isInstanceOf(InvalidExperimentConfigException.class);
+        assertThatThrownBy(() -> limited.validate(validSpec().put("timeoutSeconds", 301)))
+                .isInstanceOf(InvalidExperimentConfigException.class);
+        assertThatThrownBy(() -> new ExperimentConfigValidator(64, 300))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
     void acceptsAndCopiesAValidV1SinglePointConfig() {
         ObjectNode original = validSpec();
 

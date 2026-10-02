@@ -31,6 +31,8 @@ public class SecurityConfiguration {
                                 "/api/auth/login",
                                 "/api/system/info",
                                 "/actuator/health",
+                                "/actuator/health/liveness",
+                                "/actuator/health/readiness",
                                 "/actuator/info"
                         ).permitAll()
                         .anyRequest().authenticated()

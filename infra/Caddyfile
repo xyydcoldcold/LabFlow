@@ -1,0 +1,31 @@
+{
+    email {$ACME_EMAIL}
+    admin off
+}
+
+{$LABFLOW_DOMAIN} {
+    encode zstd gzip
+    header {
+        X-Content-Type-Options nosniff
+        Referrer-Policy same-origin
+        X-Frame-Options DENY
+    }
+
+    # Accounts are provisioned from the VM. The backend itself has no public port.
+    @registration path /api/auth/register /api/auth/register/*
+    handle @registration {
+        header Content-Type application/json
+        respond `{"status":403,"code":"REGISTRATION_DISABLED","message":"Contact the administrator for an account"}` 403
+    }
+
+    @private path /internal /internal/* /actuator /actuator/*
+    handle @private {
+        respond "Not found" 404
+    }
+
+    handle {
+        reverse_proxy frontend:8080 {
+            flush_interval -1
+        }
+    }
+}

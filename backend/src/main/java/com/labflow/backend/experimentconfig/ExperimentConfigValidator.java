@@ -3,6 +3,8 @@ package com.labflow.backend.experimentconfig;
 import java.util.Set;
 
 import org.springframework.stereotype.Component;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import tools.jackson.databind.JsonNode;
 
 @Component
@@ -12,6 +14,26 @@ public class ExperimentConfigValidator {
             "schemaVersion", "taskType", "method", "basis", "charge", "spin",
             "maxMemoryMb", "timeoutSeconds"
     );
+
+    private final int maxMemoryMb;
+    private final int maxTimeoutSeconds;
+
+    public ExperimentConfigValidator() {
+        this(65_536, 86_400);
+    }
+
+    @Autowired
+    public ExperimentConfigValidator(
+            @Value("${labflow.execution.max-memory-mb:65536}") int maxMemoryMb,
+            @Value("${labflow.execution.max-timeout-seconds:86400}") int maxTimeoutSeconds
+    ) {
+        if (maxMemoryMb < 128 || maxMemoryMb > 65_536
+                || maxTimeoutSeconds < 1 || maxTimeoutSeconds > 86_400) {
+            throw new IllegalArgumentException("Execution limits must fit the version 1 schema");
+        }
+        this.maxMemoryMb = maxMemoryMb;
+        this.maxTimeoutSeconds = maxTimeoutSeconds;
+    }
 
     public JsonNode validate(JsonNode spec) {
         if (spec == null || !spec.isObject()) {
@@ -38,8 +60,8 @@ public class ExperimentConfigValidator {
         requireText(spec, "basis", 100);
         requireInteger(spec, "charge", -20, 20);
         requireInteger(spec, "spin", 0, 20);
-        requireInteger(spec, "maxMemoryMb", 128, 65_536);
-        requireInteger(spec, "timeoutSeconds", 1, 86_400);
+        requireInteger(spec, "maxMemoryMb", 128, maxMemoryMb);
+        requireInteger(spec, "timeoutSeconds", 1, maxTimeoutSeconds);
 
         return spec.deepCopy();
     }

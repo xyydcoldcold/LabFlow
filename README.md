@@ -213,6 +213,8 @@ Vite proxies `/api` to the backend. The production Nginx image uses the same pat
 
 ## Run the local stack
 
+For a single-VM cloud staging deployment with HTTPS, private infrastructure, server-created accounts, and deployment backups, follow [the cloud deployment runbook](docs/CLOUD_DEPLOYMENT.md). Automatic worker-loss recovery remains an upcoming milestone.
+
 ### Prerequisites
 
 - Docker Engine or Docker Desktop with Docker Compose

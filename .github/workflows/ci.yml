@@ -114,8 +114,21 @@ jobs:
       - name: Validate Compose configuration
         run: docker compose config --quiet
 
+      - name: Test production deployment configuration
+        run: python3 -m unittest discover -s tests/deployment -v
+
       - name: Build service images
         run: docker compose build
+
+      - name: Validate production proxies
+        run: |
+          docker run --rm --network none --add-host backend:127.0.0.1 \
+            -v "$PWD/frontend/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro" \
+            labflow-frontend:local nginx -t
+          docker run --rm --network none \
+            -e LABFLOW_DOMAIN=labflow.example.org -e ACME_EMAIL=owner@example.org \
+            -v "$PWD/infra/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
   week4-e2e:
     name: Week 4 scientific job acceptance

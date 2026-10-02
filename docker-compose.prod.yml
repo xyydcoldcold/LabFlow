@@ -1,0 +1,163 @@
+# Standalone file: do not merge it with docker-compose.yml (which publishes development ports).
+x-logging: &logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
+services:
+  gateway:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    environment:
+      LABFLOW_DOMAIN: ${LABFLOW_DOMAIN:?Set LABFLOW_DOMAIN}
+      ACME_EMAIL: ${ACME_EMAIL:?Set ACME_EMAIL}
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./infra/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    networks: [web]
+    depends_on:
+      frontend:
+        condition: service_healthy
+    mem_limit: 256m
+    cpus: 0.5
+    logging: *logging
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: labflow
+      POSTGRES_USER: labflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    networks: [data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U labflow -d labflow"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 1g
+    cpus: 1
+    logging: *logging
+
+  rabbitmq:
+    image: rabbitmq:4-alpine
+    hostname: rabbitmq
+    restart: unless-stopped
+    environment:
+      RABBITMQ_DEFAULT_USER: labflow
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD}
+    volumes:
+      - rabbitmq-data:/var/lib/rabbitmq
+    networks: [data]
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    mem_limit: 768m
+    cpus: 1
+    logging: *logging
+
+  backend:
+    image: labflow-backend:${LABFLOW_RELEASE:?Set LABFLOW_RELEASE}
+    build: ./backend
+    init: true
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      DB_URL: jdbc:postgresql://postgres:5432/labflow
+      DB_USERNAME: labflow
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: labflow
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD}
+      AUTH_JWT_SECRET: ${AUTH_JWT_SECRET:?Set AUTH_JWT_SECRET}
+      AUTH_JWT_ISSUER: https://${LABFLOW_DOMAIN:?Set LABFLOW_DOMAIN}
+      WORKER_SERVICE_TOKEN: ${WORKER_SERVICE_TOKEN:?Set WORKER_SERVICE_TOKEN}
+      ARTIFACT_ROOT: /var/lib/labflow/artifacts
+      ARTIFACT_MAX_UPLOAD_SIZE: 1MB
+      TASK_MAX_MEMORY_MB: "1024"
+      TASK_MAX_TIMEOUT_SECONDS: "300"
+      JAVA_TOOL_OPTIONS: -XX:MaxRAMPercentage=65
+    volumes:
+      - artifact-data:/var/lib/labflow/artifacts
+    networks: [app, data]
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    stop_grace_period: 45s
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      start_period: 60s
+      retries: 12
+    mem_limit: 1536m
+    cpus: 1
+    logging: *logging
+
+  frontend:
+    image: labflow-frontend:${LABFLOW_RELEASE:?Set LABFLOW_RELEASE}
+    build: ./frontend
+    restart: unless-stopped
+    volumes:
+      - ./frontend/nginx.prod.conf:/etc/nginx/conf.d/default.conf:ro
+    networks: [web, app]
+    depends_on:
+      backend:
+        condition: service_healthy
+    mem_limit: 128m
+    cpus: 0.5
+    logging: *logging
+
+  worker:
+    image: labflow-worker:${LABFLOW_RELEASE:?Set LABFLOW_RELEASE}
+    build: ./worker
+    init: true
+    restart: unless-stopped
+    environment:
+      WORKER_INSTANCE_NAME: cloud-worker
+      LABFLOW_API_URL: http://backend:8080
+      LABFLOW_SERVICE_TOKEN: ${WORKER_SERVICE_TOKEN:?Set WORKER_SERVICE_TOKEN}
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: labflow
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD:?Set RABBITMQ_PASSWORD}
+      WORKER_IMAGE_DIGEST: ${WORKER_IMAGE_DIGEST:?Set WORKER_IMAGE_DIGEST}
+      ARTIFACT_ROOT: /var/lib/labflow/artifacts
+      LABFLOW_TASK_THREADS: "1"
+    volumes:
+      - artifact-data:/var/lib/labflow/artifacts:ro
+    networks: [data]
+    depends_on:
+      backend:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    stop_grace_period: 330s
+    mem_limit: 1536m
+    cpus: 1
+    logging: *logging
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
+  artifact-data:
+  caddy-data:
+  caddy-config:
+
+networks:
+  web:
+  app:
+    internal: true
+  data:
+    internal: true
