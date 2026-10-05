@@ -67,7 +67,7 @@ RabbitMQ declares a durable direct exchange, a durable quorum work queue, 15/60/
 
 ### Lease and fencing token
 
-Each claimed attempt receives a lease and a unique fencing token. Every log and terminal result write must present that token, and writes from a non-active attempt are rejected as `STALE_ATTEMPT`. Lease renewal and automatic abandoned-attempt recovery are the next reliability stage.
+Each claimed attempt receives a lease and a unique fencing token. Every log and terminal result write must present that token, and writes from a non-active attempt are rejected as `STALE_ATTEMPT`. The worker renews active leases at most every five seconds (sooner for shorter leases), and updates worker liveness while idle. Renewal uses the backend Clock and rejects expired leases. The executor services RabbitMQ traffic during calculation and kills the task process group if renewal cannot be confirmed. Automatic abandoned-attempt recovery is the next reliability stage (Week 5, Day 2).
 
 ### Unique final result
 

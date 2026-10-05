@@ -27,6 +27,15 @@ class LabFlowApi:
     def claim(self, job_id: int, worker_id: int) -> dict[str, Any]:
         return self._request(f"/internal/jobs/{job_id}/claim", {"workerId": worker_id})
 
+    def heartbeat_worker(self, worker_id: int) -> dict[str, Any]:
+        return self._request(f"/internal/workers/{worker_id}/heartbeat", {}, retries=0, timeout=2)
+
+    def heartbeat_attempt(self, attempt_id: int, token: str) -> dict[str, Any]:
+        return self._request(
+            f"/internal/attempts/{attempt_id}/heartbeat", {},
+            attempt_token=token, retries=0, timeout=2,
+        )
+
     def log(self, attempt_id: int, token: str, payload: dict[str, Any]) -> dict[str, Any]:
         return self._request(
             f"/internal/attempts/{attempt_id}/logs", payload,
@@ -52,6 +61,7 @@ class LabFlowApi:
         *,
         attempt_token: str | None = None,
         retries: int = 2,
+        timeout: float = 15,
     ) -> dict[str, Any]:
         data = json.dumps(payload, separators=(",", ":")).encode()
         headers = {
@@ -64,7 +74,7 @@ class LabFlowApi:
         for attempt in range(retries + 1):
             request = urllib.request.Request(self.base_url + path, data=data, headers=headers, method="POST")
             try:
-                with urllib.request.urlopen(request, timeout=15) as response:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
                     return json.load(response)
             except urllib.error.HTTPError as error:
                 body: dict[str, Any] = {}

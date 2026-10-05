@@ -23,11 +23,14 @@ class AttemptLogUploader:
         self._thread.start()
         return self
 
-    def __exit__(self, *_args: Any) -> None:
+    def __exit__(self, exc_type: Any, _exception: Any, _traceback: Any) -> None:
         self._stopped.set()
         if self._thread is not None:
             self._thread.join()
-        self.flush()
+        # Preserve an execution/lease error; the caller decides whether a final
+        # upload is still permitted. Successful tasks must flush before completion.
+        if exc_type is None:
+            self.flush()
 
     def _periodic_flush(self) -> None:
         while not self._stopped.wait(0.5):

@@ -35,6 +35,19 @@ public class WorkerInternalController {
         return executionService.claim(jobId, request.workerId());
     }
 
+    @PostMapping("/workers/{workerId}/heartbeat")
+    public WorkerHeartbeatResponse heartbeatWorker(@PathVariable long workerId) {
+        return executionService.heartbeatWorker(workerId);
+    }
+
+    @PostMapping("/attempts/{attemptId}/heartbeat")
+    public AttemptHeartbeatResponse heartbeatAttempt(
+            @PathVariable long attemptId,
+            @RequestHeader("X-Attempt-Token") String token
+    ) {
+        return executionService.heartbeatAttempt(attemptId, token);
+    }
+
     @PostMapping("/attempts/{attemptId}/logs")
     @ResponseStatus(HttpStatus.CREATED)
     public JobLogChunkResponse appendLog(

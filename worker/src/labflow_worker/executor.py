@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,9 @@ def execute_task(
     claim: dict[str, Any],
     image_digest: str,
     on_log: LogCallback,
+    on_tick: Callable[[], None] = lambda: None,
+    *,
+    clock: Callable[[], float] = time.monotonic,
 ) -> dict[str, Any]:
     spec = claim["spec"]
     timeout_seconds = int(spec.get("timeoutSeconds", 300))
@@ -69,12 +73,23 @@ def execute_task(
         ]
         for reader in readers:
             reader.start()
+        deadline = clock() + timeout_seconds
         try:
-            return_code = process.wait(timeout=timeout_seconds)
-        except subprocess.TimeoutExpired as error:
-            os.killpg(process.pid, signal.SIGKILL)
+            while True:
+                on_tick()
+                remaining = deadline - clock()
+                if remaining <= 0:
+                    raise TaskExecutionError("TASK_TIMEOUT", f"Task exceeded {timeout_seconds} seconds")
+                try:
+                    return_code = process.wait(timeout=min(0.25, remaining))
+                    break
+                except subprocess.TimeoutExpired:
+                    continue
+        except BaseException:
+            if process.poll() is None:
+                os.killpg(process.pid, signal.SIGKILL)
             process.wait()
-            raise TaskExecutionError("TASK_TIMEOUT", f"Task exceeded {timeout_seconds} seconds") from error
+            raise
         finally:
             for reader in readers:
                 reader.join(timeout=5)

@@ -97,6 +97,17 @@ class WorkerExecutionIntegrationTest {
         String inputPath = JsonPath.read(claimResponse, "$.inputArtifactPath");
         assertThat(Path.of(inputPath)).isRegularFile().startsWith(ARTIFACT_ROOT);
 
+        workerPost("/internal/workers/" + workerId + "/heartbeat", "{}", null, 200);
+        workerPost("/internal/workers/999999999/heartbeat", "{}", null, 404);
+        workerPost("/internal/attempts/" + attemptId + "/heartbeat", "{}", "wrong-token", 409);
+        String renewed = workerPost("/internal/attempts/" + attemptId + "/heartbeat",
+                "{}", attemptToken, 200);
+        assertThat((Boolean) JsonPath.read(renewed, "$.cancelRequested")).isFalse();
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT lease_expires_at FROM job_attempts WHERE id = ?",
+                java.sql.Timestamp.class, attemptId).toInstant())
+                .isAfterOrEqualTo(java.time.Instant.parse(JsonPath.read(claimResponse, "$.leaseExpiresAt")));
+
         String log = """
                 {"seqNo":0,"stream":"STDOUT","emittedAt":"2026-09-21T12:00:00Z","content":"SCF started\\n"}
                 """;
@@ -125,6 +136,8 @@ class WorkerExecutionIntegrationTest {
                 """;
         workerPost("/internal/attempts/" + attemptId + "/succeed", result, attemptToken, 200);
         workerPost("/internal/attempts/" + attemptId + "/succeed", result, attemptToken, 200);
+
+        workerPost("/internal/attempts/" + attemptId + "/heartbeat", "{}", attemptToken, 409);
 
         assertThat(jdbcTemplate.queryForObject(
                 "SELECT COUNT(*) FROM job_results WHERE job_id = ?", Integer.class, jobId

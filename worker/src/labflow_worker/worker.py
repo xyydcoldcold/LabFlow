@@ -9,6 +9,7 @@ import pika
 from .api import ApiError, LabFlowApi
 from .executor import TaskExecutionError, execute_task
 from .logs import AttemptLogUploader
+from .lease import AttemptLease, LeaseUnavailable
 from .registry import capabilities
 
 QUEUE = "labflow.jobs.q"
@@ -37,11 +38,25 @@ class Worker:
             heartbeat=60,
             blocked_connection_timeout=60,
         ))
+        self.connection = connection
         channel = connection.channel()
         channel.basic_qos(prefetch_count=1)
         channel.basic_consume(queue=QUEUE, on_message_callback=self._on_message, auto_ack=False)
         print(f"Worker {self.instance_name} registered as {self.worker_id}; waiting for jobs", flush=True)
-        channel.start_consuming()
+
+        def heartbeat() -> None:
+            try:
+                self.api.heartbeat_worker(self.worker_id)
+            except ApiError as error:
+                print(f"Worker heartbeat failed: {error.code}", flush=True)
+            connection.call_later(5, heartbeat)
+
+        connection.call_later(5, heartbeat)
+        try:
+            channel.start_consuming()
+        finally:
+            if connection.is_open:
+                connection.close()
 
     def _on_message(self, channel: Any, method: Any, properties: Any, body: bytes) -> None:
         del properties
@@ -64,12 +79,22 @@ class Worker:
 
         attempt_id = int(claim["attemptId"])
         attempt_token = str(claim["attemptToken"])
+        lease = AttemptLease(
+            self.api, attempt_id, attempt_token,
+            lambda: self.connection.process_data_events(time_limit=0),
+        )
         logs = AttemptLogUploader(self.api, attempt_id, attempt_token)
         try:
+            lease.tick()
             with logs:
                 logs.write("SYSTEM", f"Claimed job {claim['jobId']} as attempt {claim['attemptNo']}\n")
-                result = execute_task(claim, self.image_digest, logs.write)
+                result = execute_task(claim, self.image_digest, logs.write, lease.tick)
+            lease.tick()
             self.api.succeed(attempt_id, attempt_token, result)
+        except LeaseUnavailable:
+            # Do not report a task failure or success after losing ownership.
+            channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+            return
         except Exception as error:
             failure = _failure(error)
             try:

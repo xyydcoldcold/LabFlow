@@ -173,6 +173,32 @@ public class WorkerExecutionService {
     }
 
     @Transactional
+    public WorkerHeartbeatResponse heartbeatWorker(long workerId) {
+        Instant now = clock.instant();
+        if (jdbcTemplate.update("UPDATE workers SET last_heartbeat_at = ? WHERE id = ?",
+                Timestamp.from(now), workerId) != 1) {
+            throw new WorkerNotFoundException(workerId);
+        }
+        return new WorkerHeartbeatResponse(workerId, now);
+    }
+
+    @Transactional
+    public AttemptHeartbeatResponse heartbeatAttempt(long attemptId, String token) {
+        LockedAttempt attempt = lockAttempt(attemptId);
+        requireActiveToken(attempt, attemptId, token);
+        Instant now = clock.instant();
+        if (!attempt.leaseExpiresAt().isAfter(now)) {
+            throw new StaleAttemptException(attemptId);
+        }
+        Instant expiresAt = now.plus(properties.attemptLease());
+        jdbcTemplate.update("UPDATE job_attempts SET lease_expires_at = ? WHERE id = ?",
+                Timestamp.from(expiresAt), attemptId);
+        jdbcTemplate.update("UPDATE workers SET last_heartbeat_at = ? WHERE id = ?",
+                Timestamp.from(now), attempt.workerId());
+        return new AttemptHeartbeatResponse(attemptId, expiresAt, attempt.cancelRequested());
+    }
+
+    @Transactional
     public JobLogChunkResponse appendLog(long attemptId, String token, AppendLogRequest request) {
         LockedAttempt attempt = lockAttempt(attemptId);
         requireActiveToken(attempt, attemptId, token);
@@ -273,7 +299,8 @@ public class WorkerExecutionService {
     private LockedAttempt lockAttempt(long attemptId) {
         List<LockedAttempt> attempts = jdbcTemplate.query("""
                 SELECT a.job_id, a.status AS attempt_status, a.attempt_token::text AS attempt_token,
-                       a.finished_at, j.status AS job_status
+                       a.finished_at, a.worker_id, a.lease_expires_at,
+                       j.cancel_requested_at, j.status AS job_status
                 FROM job_attempts a
                 JOIN jobs j ON j.id = a.job_id
                 WHERE a.id = ?
@@ -283,7 +310,10 @@ public class WorkerExecutionService {
                 row.getString("attempt_status"),
                 row.getString("attempt_token"),
                 JobState.valueOf(row.getString("job_status")),
-                row.getTimestamp("finished_at") == null ? null : row.getTimestamp("finished_at").toInstant()
+                row.getTimestamp("finished_at") == null ? null : row.getTimestamp("finished_at").toInstant(),
+                row.getLong("worker_id"),
+                row.getTimestamp("lease_expires_at").toInstant(),
+                row.getTimestamp("cancel_requested_at") != null
         ), attemptId);
         if (attempts.isEmpty()) {
             throw new AttemptNotFoundException(attemptId);
@@ -373,7 +403,10 @@ public class WorkerExecutionService {
             String attemptStatus,
             String token,
             JobState jobState,
-            Instant finishedAt
+            Instant finishedAt,
+            long workerId,
+            Instant leaseExpiresAt,
+            boolean cancelRequested
     ) {
     }
 }
