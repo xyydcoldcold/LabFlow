@@ -22,15 +22,18 @@ public class JobController {
     private final JobSubmissionService submissionService;
     private final JobQueryService queryService;
     private final JobLogStreamService logStreamService;
+    private final JobCancellationService cancellationService;
 
     public JobController(
             JobSubmissionService submissionService,
             JobQueryService queryService,
-            JobLogStreamService logStreamService
+            JobLogStreamService logStreamService,
+            JobCancellationService cancellationService
     ) {
         this.submissionService = submissionService;
         this.queryService = queryService;
         this.logStreamService = logStreamService;
+        this.cancellationService = cancellationService;
     }
 
     @PostMapping
@@ -44,6 +47,11 @@ public class JobController {
         );
         URI location = URI.create("/api/jobs/" + job.id());
         return ResponseEntity.created(location).body(job);
+    }
+
+    @PostMapping("/{jobId}/cancel")
+    public JobCancellationResponse cancel(@AuthenticationPrincipal Jwt jwt, @PathVariable long jobId) {
+        return cancellationService.cancel(jobId, Long.parseLong(jwt.getSubject()));
     }
 
     @GetMapping("/{jobId}")

@@ -45,9 +45,9 @@ The intended execution flow is:
 3. A worker consumes the message and atomically claims a new job attempt.
 4. The worker uploads ordered log chunks and runs a whitelisted task in an isolated subprocess.
 5. The backend accepts the result only when the attempt token is still active.
-6. A later recovery stage will expire abandoned leases, mark attempts `LOST`, and queue another attempt.
+6. A scheduled RecoveryReaper marks expired attempts `LOST` and requeues eligible jobs through a new Outbox event. Jobs that exhaust `maxAttempts` become `FAILED`.
 
-## Planned reliability model
+## Reliability model
 
 ### Job and attempt separation
 
@@ -67,7 +67,15 @@ RabbitMQ declares a durable direct exchange, a durable quorum work queue, 15/60/
 
 ### Lease and fencing token
 
-Each claimed attempt receives a lease and a unique fencing token. Every log and terminal result write must present that token, and writes from a non-active attempt are rejected as `STALE_ATTEMPT`. The worker renews active leases at most every five seconds (sooner for shorter leases), and updates worker liveness while idle. Renewal uses the backend Clock and rejects expired leases. The executor services RabbitMQ traffic during calculation and kills the task process group if renewal cannot be confirmed. Automatic abandoned-attempt recovery is the next reliability stage (Week 5, Day 2).
+Each claimed attempt receives a lease and a unique fencing token. Every new heartbeat, log, and terminal result write must present that token and an unexpired lease; writes from an expired or non-active attempt are rejected as `STALE_ATTEMPT`. Retries of an already committed terminal outcome remain idempotent for its original token. The worker renews active leases at most every five seconds (sooner for shorter leases), and updates worker liveness while idle. Renewal uses the backend Clock and rejects expired leases. The executor services RabbitMQ traffic during calculation and kills the task process group if renewal cannot be confirmed.
+
+### Expired-attempt recovery
+
+A RecoveryReaper scans every five seconds in bounded batches, locks expired attempts and jobs with `SKIP LOCKED`, and uses a job-version guard. It atomically marks the attempt `LOST`, advances the job version, records recovery history, and writes a new Outbox event when another attempt is allowed. Recovery at the attempt limit marks the job `FAILED` without another message. If cancellation is pending when the lease expires, recovery marks the attempt `LOST` and job `CANCELLED` without a retry message.
+
+### Cancellation
+
+Authenticated contributors can cancel their own jobs; project owners and maintainers can cancel any project job. QUEUED jobs cancel immediately. RUNNING jobs keep a pending request until the worker stops the subprocess and confirms cancellation, or the lease expires and recovery finalizes it. A committed cancellation request blocks later result/failure commits; a completed job stays final.
 
 ### Unique final result
 
@@ -213,7 +221,7 @@ Vite proxies `/api` to the backend. The production Nginx image uses the same pat
 
 ## Run the local stack
 
-For a single-VM cloud staging deployment with HTTPS, private infrastructure, server-created accounts, and deployment backups, follow [the cloud deployment runbook](docs/CLOUD_DEPLOYMENT.md). Automatic worker-loss recovery remains an upcoming milestone.
+For a single-VM cloud staging deployment with HTTPS, private infrastructure, server-created accounts, and deployment backups, follow [the cloud deployment runbook](docs/CLOUD_DEPLOYMENT.md). Worker-loss recovery is implemented; cloud recovery acceptance still needs to be verified.
 
 ### Prerequisites
 

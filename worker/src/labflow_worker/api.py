@@ -48,6 +48,12 @@ class LabFlowApi:
             attempt_token=token, retries=5,
         )
 
+    def cancelled(self, attempt_id: int, token: str) -> dict[str, Any]:
+        return self._request(
+            f"/internal/attempts/{attempt_id}/cancelled", {},
+            attempt_token=token, retries=5,
+        )
+
     def fail(self, attempt_id: int, token: str, error: dict[str, Any]) -> dict[str, Any]:
         return self._request(
             f"/internal/attempts/{attempt_id}/fail", {"error": error},

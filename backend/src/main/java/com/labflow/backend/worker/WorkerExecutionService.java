@@ -247,6 +247,9 @@ public class WorkerExecutionService {
             return new AttemptCompletionResponse(attempt.jobId(), attemptId, "SUCCEEDED", attempt.finishedAt());
         }
         requireActive(attempt, attemptId);
+        if (attempt.cancelRequested()) {
+            throw new AttemptCancellationRequestedException(attemptId);
+        }
 
         Instant now = clock.instant();
         jdbcTemplate.update("""
@@ -267,10 +270,29 @@ public class WorkerExecutionService {
             return new AttemptCompletionResponse(attempt.jobId(), attemptId, "FAILED", attempt.finishedAt());
         }
         requireActive(attempt, attemptId);
+        if (attempt.cancelRequested()) {
+            throw new AttemptCancellationRequestedException(attemptId);
+        }
 
         Instant now = clock.instant();
         finishAttemptAndJob(attempt, attemptId, JobState.FAILED, now, request.error());
         return new AttemptCompletionResponse(attempt.jobId(), attemptId, "FAILED", now);
+    }
+
+    @Transactional
+    public AttemptCompletionResponse cancelled(long attemptId, String token) {
+        LockedAttempt attempt = lockAttempt(attemptId);
+        requireToken(attempt, attemptId, token);
+        if ("CANCELLED".equals(attempt.attemptStatus()) && attempt.jobState() == JobState.CANCELLED) {
+            return new AttemptCompletionResponse(attempt.jobId(), attemptId, "CANCELLED", attempt.finishedAt());
+        }
+        requireActive(attempt, attemptId);
+        if (!attempt.cancelRequested()) {
+            throw new IllegalArgumentException("Cancellation has not been requested for this attempt");
+        }
+        Instant now = clock.instant();
+        finishAttemptAndJob(attempt, attemptId, JobState.CANCELLED, now, null);
+        return new AttemptCompletionResponse(attempt.jobId(), attemptId, "CANCELLED", now);
     }
 
     private void finishAttemptAndJob(
@@ -336,7 +358,8 @@ public class WorkerExecutionService {
     }
 
     private void requireActive(LockedAttempt attempt, long attemptId) {
-        if (!"ACTIVE".equals(attempt.attemptStatus()) || attempt.jobState() != JobState.RUNNING) {
+        if (!"ACTIVE".equals(attempt.attemptStatus()) || attempt.jobState() != JobState.RUNNING
+                || !attempt.leaseExpiresAt().isAfter(clock.instant())) {
             throw new StaleAttemptException(attemptId);
         }
     }

@@ -24,6 +24,8 @@ import com.labflow.backend.project.ProjectNotFoundException;
 import com.labflow.backend.worker.AttemptNotFoundException;
 import com.labflow.backend.worker.JobNotClaimableException;
 import com.labflow.backend.worker.StaleAttemptException;
+import com.labflow.backend.worker.AttemptCancellationRequestedException;
+import com.labflow.backend.job.JobNotCancellableException;
 import com.labflow.backend.worker.WorkerNotFoundException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -154,6 +156,20 @@ public class GlobalExceptionHandler {
             HttpServletRequest request
     ) {
         return error(HttpStatus.CONFLICT, "JOB_NOT_CLAIMABLE", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(JobNotCancellableException.class)
+    ResponseEntity<ApiErrorResponse> handleJobNotCancellable(
+            JobNotCancellableException exception, HttpServletRequest request
+    ) {
+        return error(HttpStatus.CONFLICT, "JOB_ALREADY_FINISHED", exception.getMessage(), request);
+    }
+
+    @ExceptionHandler(AttemptCancellationRequestedException.class)
+    ResponseEntity<ApiErrorResponse> handleAttemptCancellationRequested(
+            AttemptCancellationRequestedException exception, HttpServletRequest request
+    ) {
+        return error(HttpStatus.CONFLICT, "CANCEL_REQUESTED", exception.getMessage(), request);
     }
 
     @ExceptionHandler(StaleAttemptException.class)

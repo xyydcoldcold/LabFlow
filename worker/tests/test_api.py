@@ -23,3 +23,14 @@ def test_heartbeats_use_service_auth_and_bounded_http_timeout(monkeypatch) -> No
     assert worker_request.get_header("Authorization") == "Bearer test-service-token"
     assert json.loads(attempt_request.data) == {}
     assert worker_timeout == attempt_timeout == 2
+
+
+def test_cancellation_confirmation_uses_attempt_token(monkeypatch) -> None:
+    requests = []
+    def urlopen(request, *, timeout):
+        requests.append(request)
+        return io.StringIO('{"status":"CANCELLED"}')
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    LabFlowApi("http://backend:8080", "test").cancelled(9, "token")
+    assert requests[0].full_url.endswith("/internal/attempts/9/cancelled")
+    assert requests[0].get_header("X-attempt-token") == "token"

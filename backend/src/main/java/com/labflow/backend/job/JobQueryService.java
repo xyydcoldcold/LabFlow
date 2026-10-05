@@ -49,13 +49,14 @@ public class JobQueryService {
     public JobDetailsResponse get(long jobId, long userId) {
         List<JobRow> jobs = jdbcTemplate.query("""
                 SELECT id, project_id, molecular_input_id, experiment_config_id,
-                       status, spec_snapshot::text AS spec_snapshot, created_at, updated_at
+                       status, spec_snapshot::text AS spec_snapshot, created_at, updated_at, cancel_requested_at
                 FROM jobs WHERE id = ?
                 """, (row, rowNumber) -> new JobRow(
                 row.getLong("id"), row.getLong("project_id"),
                 row.getLong("molecular_input_id"), row.getLong("experiment_config_id"),
                 JobState.valueOf(row.getString("status")), readJson(row.getString("spec_snapshot")),
-                row.getTimestamp("created_at").toInstant(), row.getTimestamp("updated_at").toInstant()
+                row.getTimestamp("created_at").toInstant(), row.getTimestamp("updated_at").toInstant(),
+                nullableInstant(row, "cancel_requested_at")
         ), jobId);
         if (jobs.isEmpty()) {
             throw new JobNotFoundException(jobId);
@@ -94,7 +95,7 @@ public class JobQueryService {
         ), jobId);
         return new JobDetailsResponse(
                 job.id(), job.projectId(), job.molecularInputId(), job.experimentConfigId(),
-                job.status(), job.specSnapshot(), job.createdAt(), job.updatedAt(),
+                job.status(), job.specSnapshot(), job.createdAt(), job.updatedAt(), job.cancelRequestedAt(),
                 attempts, logs, results.isEmpty() ? null : results.getFirst()
         );
     }
@@ -124,7 +125,8 @@ public class JobQueryService {
             JobState status,
             JsonNode specSnapshot,
             java.time.Instant createdAt,
-            java.time.Instant updatedAt
+            java.time.Instant updatedAt,
+            java.time.Instant cancelRequestedAt
     ) {
     }
 }

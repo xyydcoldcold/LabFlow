@@ -62,3 +62,29 @@ def test_invalid_or_expired_lease_response_stops_execution(expiry) -> None:
                          wall_clock=lambda: datetime(2026, 10, 5, 12, tzinfo=timezone.utc))
     with pytest.raises(LeaseUnavailable):
         lease.tick()
+
+
+def test_lease_surfaces_cancellation_after_confirming_ownership() -> None:
+    from labflow_worker.lease import AttemptCancelled
+    now = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    api = SimpleNamespace(heartbeat_attempt=lambda *_: {
+        "leaseExpiresAt": (now + timedelta(seconds=30)).isoformat(), "cancelRequested": True,
+    })
+    lease = AttemptLease(api, 9, "token", lambda: None, wall_clock=lambda: now)
+    with pytest.raises(AttemptCancelled):
+        lease.tick()
+
+
+def test_forced_heartbeat_observes_cancellation_before_terminal_commit() -> None:
+    from labflow_worker.lease import AttemptCancelled
+    now = datetime(2026, 10, 5, tzinfo=timezone.utc)
+    replies = iter([
+        {"leaseExpiresAt": (now + timedelta(seconds=30)).isoformat(), "cancelRequested": False},
+        {"leaseExpiresAt": (now + timedelta(seconds=30)).isoformat(), "cancelRequested": True},
+    ])
+    api = SimpleNamespace(heartbeat_attempt=lambda *_: next(replies))
+    lease = AttemptLease(api, 9, "token", lambda: None, clock=lambda: 0, wall_clock=lambda: now)
+    lease.tick()
+    lease.tick()  # Not yet due: no second request.
+    with pytest.raises(AttemptCancelled):
+        lease.tick(force=True)

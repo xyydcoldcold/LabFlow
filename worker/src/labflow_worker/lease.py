@@ -10,6 +10,10 @@ class LeaseUnavailable(RuntimeError):
     """Execution must stop when ownership cannot be confirmed."""
 
 
+class AttemptCancelled(RuntimeError):
+    """The backend requested termination of the owned task."""
+
+
 class AttemptLease:
     def __init__(
         self, api: LabFlowApi, attempt_id: int, token: str,
@@ -25,9 +29,9 @@ class AttemptLease:
         self.wall_clock = wall_clock
         self.next_heartbeat = clock()
 
-    def tick(self) -> None:
+    def tick(self, *, force: bool = False) -> None:
         self.pump()
-        if self.clock() < self.next_heartbeat:
+        if not force and self.clock() < self.next_heartbeat:
             return
         try:
             response: dict[str, Any] = self.api.heartbeat_attempt(self.attempt_id, self.token)
@@ -37,4 +41,6 @@ class AttemptLease:
                 raise ValueError("Backend returned an expired lease")
         except (ApiError, ValueError, KeyError, TypeError) as error:
             raise LeaseUnavailable("Attempt lease renewal failed; stopping task") from error
+        if response.get("cancelRequested"):
+            raise AttemptCancelled("Cancellation requested by the backend")
         self.next_heartbeat = self.clock() + min(5.0, remaining / 3)

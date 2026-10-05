@@ -152,3 +152,157 @@ def test_idle_worker_sends_and_reschedules_heartbeat(monkeypatch: Any) -> None:
     assert len(timers) == 1
     assert timers[0][0] == 5
     assert not connection.is_open
+
+
+class CancelApi(SuccessfulApi):
+    def __init__(self) -> None:
+        super().__init__()
+        self.cancellations = []
+
+    def cancelled(self, attempt_id: int, token: str) -> dict[str, Any]:
+        self.cancellations.append((attempt_id, token))
+        return {"status": "CANCELLED"}
+
+
+def test_worker_confirms_cancellation_after_executor_stops(monkeypatch: Any) -> None:
+    from labflow_worker.lease import AttemptCancelled
+    api = CancelApi()
+    channel = Channel()
+    stopped = []
+
+    def stop(*_args):
+        stopped.append(True)
+        raise AttemptCancelled("cancel requested")
+
+    monkeypatch.setattr("labflow_worker.worker.execute_task", stop)
+    bare_worker(api)._on_message(channel, SimpleNamespace(delivery_tag=10), None,
+                                b'{"jobId":42,"schemaVersion":1}')
+    assert stopped == [True]
+    assert api.cancellations == [(9, "token")]
+    assert channel.acked == [10]
+    assert api.result is None
+
+
+def test_worker_does_not_start_task_cancelled_before_execution(monkeypatch: Any) -> None:
+    class AlreadyCancelledApi(CancelApi):
+        def heartbeat_attempt(self, *_args):
+            return {"leaseExpiresAt": (datetime.now(timezone.utc) + timedelta(seconds=30)).isoformat(),
+                    "cancelRequested": True}
+
+    api = AlreadyCancelledApi()
+    channel = Channel()
+    def unexpected(*_args):
+        raise AssertionError("Cancelled task must not launch")
+    monkeypatch.setattr("labflow_worker.worker.execute_task", unexpected)
+    bare_worker(api)._on_message(channel, SimpleNamespace(delivery_tag=11), None,
+                                b'{"jobId":42,"schemaVersion":1}')
+    assert api.cancellations == [(9, "token")]
+    assert channel.acked == [11]
+
+
+def test_worker_nacks_when_cancellation_confirmation_cannot_be_persisted(monkeypatch: Any) -> None:
+    from labflow_worker.lease import AttemptCancelled
+    class UnavailableApi(CancelApi):
+        def cancelled(self, *_args):
+            raise ApiError(0, "NETWORK_ERROR", "unreachable")
+
+    api = UnavailableApi()
+    channel = Channel()
+    def stop(*_args):
+        raise AttemptCancelled("cancel")
+    monkeypatch.setattr("labflow_worker.worker.execute_task", stop)
+    bare_worker(api)._on_message(channel, SimpleNamespace(delivery_tag=12), None,
+                                b'{"jobId":42,"schemaVersion":1}')
+    assert channel.acked == []
+    assert channel.nacked == [(12, True)]
+
+
+def test_worker_confirms_cancel_when_success_loses_the_database_race(monkeypatch: Any) -> None:
+    class CancelWinsApi(CancelApi):
+        def succeed(self, *_args):
+            raise ApiError(409, "CANCEL_REQUESTED", "cancel won")
+
+    api = CancelWinsApi()
+    channel = Channel()
+    monkeypatch.setattr("labflow_worker.worker.execute_task", lambda *_: {"summary": {}, "manifest": {}})
+    bare_worker(api)._on_message(channel, SimpleNamespace(delivery_tag=13), None,
+                                b'{"jobId":42,"schemaVersion":1}')
+    assert api.cancellations == [(9, "token")]
+    assert channel.acked == [13]
+    assert api.result is None
+
+
+def test_worker_does_not_report_failure_after_a_stale_result_rejection(monkeypatch: Any) -> None:
+    class StaleResultApi(SuccessfulApi):
+        def succeed(self, *_args):
+            raise ApiError(409, "STALE_ATTEMPT", "expired")
+
+    api = StaleResultApi()
+    channel = Channel()
+    monkeypatch.setattr("labflow_worker.worker.execute_task", lambda *_: {"summary": {}, "manifest": {}})
+    bare_worker(api)._on_message(channel, SimpleNamespace(delivery_tag=14), None,
+                                b'{"jobId":42,"schemaVersion":1}')
+    assert channel.nacked == [(14, True)]
+    assert channel.acked == []
+
+
+def test_running_child_is_reaped_before_worker_confirms_cancellation(tmp_path, monkeypatch: Any) -> None:
+    import hashlib
+    import subprocess
+    original_popen = subprocess.Popen
+    children = []
+    input_path = tmp_path / "input.xyz"
+    input_path.write_text("payload")
+
+    def record_child(*args, **kwargs):
+        child = original_popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    class RunningCancelApi(CancelApi):
+        heartbeats = 0
+
+        def claim(self, job_id, worker_id):
+            claim = super().claim(job_id, worker_id)
+            claim.update({"taskType": "demo.sleep_hash", "inputPath": str(input_path),
+                          "inputSha256": hashlib.sha256(b"payload").hexdigest(),
+                          "spec": {"sleepSeconds": 10, "timeoutSeconds": 20, "maxMemoryMb": 1024}})
+            return claim
+
+        def heartbeat_attempt(self, *_args):
+            self.heartbeats += 1
+            return {"leaseExpiresAt": (datetime.now(timezone.utc) + timedelta(seconds=0.6)).isoformat(),
+                    "cancelRequested": self.heartbeats >= 2}
+
+        def cancelled(self, attempt_id, token):
+            assert len(children) == 1
+            assert children[0].poll() is not None, "The child must stop before terminal acknowledgement"
+            return super().cancelled(attempt_id, token)
+
+    monkeypatch.setattr("labflow_worker.executor.subprocess.Popen", record_child)
+    api = RunningCancelApi()
+    channel = Channel()
+    bare_worker(api)._on_message(channel, SimpleNamespace(delivery_tag=15), None,
+                                b'{"jobId":42,"schemaVersion":1}')
+    assert api.cancellations == [(9, "token")]
+    assert children[0].returncode < 0
+    assert channel.acked == [15]
+    assert api.result is None
+
+
+def test_worker_confirms_cancel_when_failure_report_loses_the_database_race(monkeypatch: Any) -> None:
+    from labflow_worker.executor import TaskExecutionError
+    class FailureCancelApi(CancelApi):
+        def fail(self, *_args):
+            raise ApiError(409, "CANCEL_REQUESTED", "cancel won")
+
+    def task_failure(*_args):
+        raise TaskExecutionError("TASK_PROCESS_FAILED", "failed")
+
+    monkeypatch.setattr("labflow_worker.worker.execute_task", task_failure)
+    api = FailureCancelApi()
+    channel = Channel()
+    bare_worker(api)._on_message(channel, SimpleNamespace(delivery_tag=16), None,
+                                b'{"jobId":42,"schemaVersion":1}')
+    assert api.cancellations == [(9, "token")]
+    assert channel.acked == [16]

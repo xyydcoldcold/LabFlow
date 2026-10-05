@@ -14,6 +14,7 @@ public record JobDetailsResponse(
         JsonNode specSnapshot,
         Instant createdAt,
         Instant updatedAt,
+        Instant cancelRequestedAt,
         List<JobAttemptResponse> attempts,
         List<JobLogChunkResponse> logs,
         JobResultResponse result

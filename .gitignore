@@ -20,6 +20,8 @@ backups/
 playwright-report/
 test-results/
 /docs/WEEK4_ACCEPTANCE.md
+/docs/WEEK*_DAY*.md
+/docs/PROJECT_KNOWLEDGE.md
 
 ### Operating System ###
 .DS_Store

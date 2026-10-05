@@ -9,7 +9,7 @@ import pika
 from .api import ApiError, LabFlowApi
 from .executor import TaskExecutionError, execute_task
 from .logs import AttemptLogUploader
-from .lease import AttemptLease, LeaseUnavailable
+from .lease import AttemptCancelled, AttemptLease, LeaseUnavailable
 from .registry import capabilities
 
 QUEUE = "labflow.jobs.q"
@@ -89,13 +89,26 @@ class Worker:
             with logs:
                 logs.write("SYSTEM", f"Claimed job {claim['jobId']} as attempt {claim['attemptNo']}\n")
                 result = execute_task(claim, self.image_digest, logs.write, lease.tick)
-            lease.tick()
+            lease.tick(force=True)
             self.api.succeed(attempt_id, attempt_token, result)
+        except AttemptCancelled:
+            if not self._confirm_cancelled(attempt_id, attempt_token):
+                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+                return
         except LeaseUnavailable:
             # Do not report a task failure or success after losing ownership.
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
             return
         except Exception as error:
+            if isinstance(error, ApiError) and error.code == "STALE_ATTEMPT":
+                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+                return
+            if isinstance(error, ApiError) and error.code == "CANCEL_REQUESTED":
+                if self._confirm_cancelled(attempt_id, attempt_token):
+                    channel.basic_ack(delivery_tag=method.delivery_tag)
+                else:
+                    channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+                return
             failure = _failure(error)
             try:
                 logs.write("SYSTEM", f"Task failed: {failure['code']}: {failure['message']}\n")
@@ -105,10 +118,18 @@ class Worker:
                 pass
             try:
                 self.api.fail(attempt_id, attempt_token, failure)
-            except ApiError:
-                channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-                return
+            except ApiError as report_error:
+                if report_error.code != "CANCEL_REQUESTED" or not self._confirm_cancelled(attempt_id, attempt_token):
+                    channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+                    return
         channel.basic_ack(delivery_tag=method.delivery_tag)
+
+    def _confirm_cancelled(self, attempt_id: int, attempt_token: str) -> bool:
+        try:
+            self.api.cancelled(attempt_id, attempt_token)
+            return True
+        except ApiError:
+            return False
 
 
 def _failure(error: Exception) -> dict[str, Any]:

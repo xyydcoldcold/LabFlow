@@ -36,7 +36,10 @@ import org.testcontainers.postgresql.PostgreSQLContainer;
 @Testcontainers
 @SpringBootTest(
         classes = BackendApplication.class,
-        properties = "labflow.outbox.publisher.enabled=false"
+        properties = {
+                "labflow.outbox.publisher.enabled=false",
+                "labflow.recovery.reaper.enabled=false"
+        }
 )
 @AutoConfigureMockMvc
 class WorkerExecutionIntegrationTest {

@@ -67,6 +67,14 @@ public class WorkerInternalController {
         return executionService.succeed(attemptId, token, request);
     }
 
+    @PostMapping("/attempts/{attemptId}/cancelled")
+    public AttemptCompletionResponse cancelled(
+            @PathVariable long attemptId,
+            @RequestHeader("X-Attempt-Token") String token
+    ) {
+        return executionService.cancelled(attemptId, token);
+    }
+
     @PostMapping("/attempts/{attemptId}/fail")
     public AttemptCompletionResponse fail(
             @PathVariable long attemptId,
