@@ -78,17 +78,18 @@ class RecoveryBatchServiceIntegrationTest {
                 FROM outbox_events
                 """))
                 .containsEntry("aggregate_id", fixture.jobId())
-                .containsEntry("event_type", "JOB_QUEUED")
+                .containsEntry("event_type", "JOB_RETRY_15S")
                 .containsEntry("job_id", Long.toString(fixture.jobId()))
                 .containsEntry("matches_id", true)
                 .containsEntry("schema_version", 1)
                 .containsEntry("created_at", Timestamp.from(NOW))
-                .containsEntry("available_at", Timestamp.from(NOW))
                 .containsEntry("published_at", null);
         assertThat(recovery.recoverBatch()).isEqualTo(new RecoveryBatchResult(0, 0, 0, 0, 0));
         assertThat(count("outbox_events")).isOne();
         assertThat(count("job_events")).isOne();
 
+        assertThatThrownBy(() -> execution.claim(fixture.jobId(), fixture.workerId())).isInstanceOf(JobNotClaimableException.class);
+        when(clock.instant()).thenReturn(NOW.plusSeconds(17));
         ClaimJobResponse takeover = execution.claim(fixture.jobId(), fixture.workerId());
         assertThat(takeover.attemptNo()).isEqualTo(2);
         assertThat(takeover.attemptToken()).isNotEqualTo(fixture.token());
@@ -115,7 +116,7 @@ class RecoveryBatchServiceIntegrationTest {
     }
 
     @Test
-    void exhaustedAttemptBecomesLostAndJobFailsWithoutAnotherMessage() {
+    void exhaustedAttemptBecomesLostAndJobFailsWithADeadLetterSignal() {
         Attempt fixture = createAttempt(3, 3, NOW.minusSeconds(1));
         assertThat(recovery.recoverBatch()).isEqualTo(new RecoveryBatchResult(1, 0, 1, 0, 0));
         assertThat(jdbc.queryForObject("SELECT status FROM jobs WHERE id = ?", String.class, fixture.jobId()))
@@ -124,7 +125,8 @@ class RecoveryBatchServiceIntegrationTest {
                 fixture.attemptId())).isEqualTo("LOST");
         assertThat(jdbc.queryForObject("SELECT event_type FROM job_events", String.class))
                 .isEqualTo("JOB_ATTEMPTS_EXHAUSTED");
-        assertThat(count("outbox_events")).isZero();
+        assertThat(count("outbox_events")).isOne();
+        assertThat(jdbc.queryForObject("SELECT event_type FROM outbox_events", String.class)).isEqualTo("JOB_DEAD");
         assertThatThrownBy(() -> execution.claim(fixture.jobId(), fixture.workerId()))
                 .isInstanceOf(JobNotClaimableException.class);
     }

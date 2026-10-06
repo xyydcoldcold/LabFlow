@@ -31,3 +31,19 @@ def test_demo_task_rejects_artifact_tampering(tmp_path: Path) -> None:
     input_path.write_text("changed", encoding="utf-8")
     with pytest.raises(ValueError, match="checksum"):
         run_task("demo.sleep_hash", str(input_path), {}, "0" * 64, "test")
+
+
+def test_nonconverged_scf_is_a_typed_permanent_failure(tmp_path, monkeypatch) -> None:
+    import sys
+    from types import SimpleNamespace
+    from labflow_worker.errors import TaskExecutionError
+    calculation = SimpleNamespace(converged=False, kernel=lambda: -1.0)
+    fake = SimpleNamespace(gto=SimpleNamespace(M=lambda **_: object()),
+                           scf=SimpleNamespace(RHF=lambda _: calculation), dft=SimpleNamespace())
+    monkeypatch.setitem(sys.modules, "pyscf", fake)
+    path = tmp_path / "h2.xyz"
+    path.write_text("2\nH2\nH 0 0 0\nH 0 0 0.74\n")
+    with pytest.raises(TaskExecutionError) as raised:
+        run_task("pyscf.single_point", str(path), {"method": "RHF", "basis": "sto-3g",
+                 "charge": 0, "spin": 0, "maxMemoryMb": 1024}, hashlib.sha256(path.read_bytes()).hexdigest(), "test")
+    assert raised.value.code == "SCF_NOT_CONVERGED"

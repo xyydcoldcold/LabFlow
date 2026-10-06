@@ -14,10 +14,7 @@ from typing import Any
 LogCallback = Callable[[str, str], None]
 
 
-class TaskExecutionError(RuntimeError):
-    def __init__(self, code: str, message: str) -> None:
-        super().__init__(message)
-        self.code = code
+from .errors import TaskExecutionError
 
 
 def execute_task(
@@ -95,6 +92,10 @@ def execute_task(
                 reader.join(timeout=5)
 
         if return_code != 0:
+            if result_path.is_file():
+                failure = json.loads(result_path.read_text(encoding="utf-8")).get("error")
+                if isinstance(failure, dict):
+                    raise TaskExecutionError(str(failure["code"]), str(failure["message"]))
             code = "RESOURCE_LIMIT_EXCEEDED" if return_code in (-signal.SIGKILL, -signal.SIGSEGV) else "TASK_PROCESS_FAILED"
             raise TaskExecutionError(code, f"Task process exited with status {return_code}")
         if reader_errors:

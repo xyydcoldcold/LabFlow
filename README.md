@@ -63,7 +63,7 @@ The version 1 broker message is deliberately small:
 {"jobId": 42, "eventId": 87, "schemaVersion": 1}
 ```
 
-RabbitMQ declares a durable direct exchange, a durable quorum work queue, 15/60/300-second TTL retry queues, and a durable DLQ. Workers consume manually with prefetch one, claim jobs through the protected backend API, and acknowledge messages only after the backend confirms a terminal result.
+RabbitMQ declares a durable direct exchange, a durable quorum work queue, 15/60/300-second TTL retry queues, and a durable DLQ. Workers consume manually with prefetch one, claim jobs through the protected backend API, and acknowledge after the backend confirms a committed result, cancellation, or attempt failure with a durable retry decision.
 
 ### Lease and fencing token
 
@@ -71,11 +71,17 @@ Each claimed attempt receives a lease and a unique fencing token. Every new hear
 
 ### Expired-attempt recovery
 
-A RecoveryReaper scans every five seconds in bounded batches, locks expired attempts and jobs with `SKIP LOCKED`, and uses a job-version guard. It atomically marks the attempt `LOST`, advances the job version, records recovery history, and writes a new Outbox event when another attempt is allowed. Recovery at the attempt limit marks the job `FAILED` without another message. If cancellation is pending when the lease expires, recovery marks the attempt `LOST` and job `CANCELLED` without a retry message.
+A RecoveryReaper scans every five seconds in bounded batches, locks expired attempts and jobs with `SKIP LOCKED`, and uses a job-version guard. It atomically marks the attempt `LOST`, advances the job version, records recovery history, and writes a new Outbox event when another attempt is allowed. Recovery at the attempt limit marks the job `FAILED` and records a durable DLQ signal. If cancellation is pending when the lease expires, recovery marks the attempt `LOST` and job `CANCELLED` without a retry message.
 
 ### Cancellation
 
 Authenticated contributors can cancel their own jobs; project owners and maintainers can cancel any project job. QUEUED jobs cancel immediately. RUNNING jobs keep a pending request until the worker stops the subprocess and confirms cancellation, or the lease expires and recovery finalizes it. A committed cancellation request blocks later result/failure commits; a completed job stays final.
+
+### Typed retries and failure replay
+
+Transient task/network/log failures and expired worker leases retry through the 15/60/300-second TTL queues, with up to one second of publication jitter. The backend guards `next_attempt_at` so duplicate delivery cannot bypass the delay. New jobs have four total attempts; existing jobs keep their stored budget. Invalid input/configuration, non-converged SCF, resource limits, timeouts, and unknown errors fail without automatic retry. Exhausted transient failures produce a durable DLQ signal through the same transactional Outbox.
+
+The job detail view shows attempt failures. Project owners and maintainers can use **Replay as a new job**, backed by `POST /api/jobs/{id}/replay` with an `Idempotency-Key`. Replay preserves the failed job and its history, creates a fresh job with the same immutable input/configuration references, and records its source ID. Repeated requests with the same key create one replay job.
 
 ### Unique final result
 
@@ -320,3 +326,33 @@ LabFlow/
 ## License
 
 No license has been selected yet. Until a license is added, all rights are reserved.
+
+## Worker-crash acceptance
+
+The isolated harness uses its own Compose project and volumes and only binds test HTTP ports to localhost. Build the standard local backend/worker images first, then build the latest acceptance overlays:
+
+```bash
+backend/gradlew -p backend bootJar
+docker compose build backend worker-a
+docker compose -p labflow-w5-local -f tests/fault-injection/compose.yml build
+docker compose -p labflow-w5-local -f tests/fault-injection/compose.yml up -d --wait postgres rabbitmq backend frontend
+python3 tests/fault-injection/week5.py --project labflow-w5-local --rounds 20
+```
+
+Each round SIGKILLs worker-a, starts worker-b, checks LOST + SUCCEEDED history, rejects old-token writes, and verifies exactly one result row. The JSON report at `test-results/week5-crash.json` stays local and records every run plus median/p95 timings and PASS/FAIL gates. This test stack uses a five-second lease, one-second recovery scan, and the actual 15/60/300-second retry TTLs; these timings do not characterize the default 30-second lease or a cloud VM.
+
+For browser acceptance after the crash suite:
+
+```bash
+docker compose -p labflow-w5-local -f tests/fault-injection/compose.yml up -d --no-deps worker-b
+cd frontend
+LABFLOW_E2E_URL=http://127.0.0.1:13085 npm run test:e2e -- week5-replay.spec.ts
+```
+
+Stop the dedicated test stack from the repository root when finished:
+
+```bash
+docker compose -p labflow-w5-local -f tests/fault-injection/compose.yml down
+```
+
+Volumes remain available for evidence review. Public deployment, VM recovery, backup restoration, and scientific-throughput benchmarking require their own acceptance runs.

@@ -39,6 +39,7 @@ public class WorkerExecutionService {
     private final JobStateMachine stateMachine;
     private final JobLogStreamService logStreamService;
     private final Clock clock;
+    private final JobDispatchService dispatch;
 
     public WorkerExecutionService(
             JdbcTemplate jdbcTemplate,
@@ -47,7 +48,8 @@ public class WorkerExecutionService {
             ArtifactStorageProperties artifactProperties,
             JobStateMachine stateMachine,
             JobLogStreamService logStreamService,
-            Clock clock
+            Clock clock,
+            JobDispatchService dispatch
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
@@ -56,6 +58,7 @@ public class WorkerExecutionService {
         this.stateMachine = stateMachine;
         this.logStreamService = logStreamService;
         this.clock = clock;
+        this.dispatch = dispatch;
     }
 
     @Transactional
@@ -95,7 +98,7 @@ public class WorkerExecutionService {
     @Transactional
     public ClaimJobResponse claim(long jobId, long workerId) {
         List<ClaimableJob> jobs = jdbcTemplate.query("""
-                SELECT status, max_attempts, spec_snapshot::text AS snapshot,
+                SELECT status, max_attempts, next_attempt_at, spec_snapshot::text AS snapshot,
                        spec_snapshot -> 'experimentConfig' -> 'spec' ->> 'taskType' AS task_type,
                        spec_snapshot -> 'molecularInput' ->> 'artifactPath' AS artifact_path,
                        spec_snapshot -> 'molecularInput' ->> 'sha256' AS input_sha256
@@ -106,6 +109,7 @@ public class WorkerExecutionService {
                 JobState.valueOf(row.getString("status")),
                 row.getInt("max_attempts"),
                 readJson(row.getString("snapshot")),
+                row.getTimestamp("next_attempt_at") == null ? null : row.getTimestamp("next_attempt_at").toInstant(),
                 row.getString("task_type"),
                 row.getString("artifact_path"),
                 row.getString("input_sha256")
@@ -114,7 +118,8 @@ public class WorkerExecutionService {
             throw new JobNotFoundException(jobId);
         }
         ClaimableJob job = jobs.getFirst();
-        if (job.state() != JobState.QUEUED) {
+        if (job.state() != JobState.QUEUED
+                || (job.nextAttemptAt() != null && job.nextAttemptAt().isAfter(clock.instant()))) {
             throw new JobNotClaimableException(jobId);
         }
 
@@ -266,7 +271,7 @@ public class WorkerExecutionService {
         requireObject(request.error(), "error");
         LockedAttempt attempt = lockAttempt(attemptId);
         requireToken(attempt, attemptId, token);
-        if ("FAILED".equals(attempt.attemptStatus()) && attempt.jobState() == JobState.FAILED) {
+        if ("FAILED".equals(attempt.attemptStatus())) {
             return new AttemptCompletionResponse(attempt.jobId(), attemptId, "FAILED", attempt.finishedAt());
         }
         requireActive(attempt, attemptId);
@@ -275,7 +280,14 @@ public class WorkerExecutionService {
         }
 
         Instant now = clock.instant();
-        finishAttemptAndJob(attempt, attemptId, JobState.FAILED, now, request.error());
+        String code = request.error().path("code").asString("TASK_FAILED");
+        boolean retryable = FailurePolicy.retryable(code);
+        boolean retry = retryable && attempt.attemptNo() < attempt.maxAttempts();
+        JsonNode error = request.error().deepCopy();
+        ((tools.jackson.databind.node.ObjectNode) error).put("retryable", retryable);
+        finishAttemptAndJob(attempt, attemptId, retry ? JobState.QUEUED : JobState.FAILED, now, error);
+        if (retry) dispatch.retry(attempt.jobId(), attempt.attemptNo());
+        else if (retryable) dispatch.dead(attempt.jobId());
         return new AttemptCompletionResponse(attempt.jobId(), attemptId, "FAILED", now);
     }
 
@@ -307,7 +319,8 @@ public class WorkerExecutionService {
                 UPDATE job_attempts
                 SET status = ?, finished_at = ?, failure_json = CAST(? AS jsonb)
                 WHERE id = ?
-                """, finalState.name(), Timestamp.from(now), failure == null ? null : failure.toString(), attemptId);
+                """, (failure != null ? "FAILED" : finalState.name()), Timestamp.from(now),
+                failure == null ? null : failure.toString(), attemptId);
         jdbcTemplate.update("""
                 UPDATE jobs SET status = ?, version = version + 1, updated_at = ? WHERE id = ?
                 """, finalState.name(), Timestamp.from(now), attempt.jobId());
@@ -321,7 +334,7 @@ public class WorkerExecutionService {
     private LockedAttempt lockAttempt(long attemptId) {
         List<LockedAttempt> attempts = jdbcTemplate.query("""
                 SELECT a.job_id, a.status AS attempt_status, a.attempt_token::text AS attempt_token,
-                       a.finished_at, a.worker_id, a.lease_expires_at,
+                       a.finished_at, a.worker_id, a.lease_expires_at, a.attempt_no, j.max_attempts,
                        j.cancel_requested_at, j.status AS job_status
                 FROM job_attempts a
                 JOIN jobs j ON j.id = a.job_id
@@ -335,7 +348,8 @@ public class WorkerExecutionService {
                 row.getTimestamp("finished_at") == null ? null : row.getTimestamp("finished_at").toInstant(),
                 row.getLong("worker_id"),
                 row.getTimestamp("lease_expires_at").toInstant(),
-                row.getTimestamp("cancel_requested_at") != null
+                row.getTimestamp("cancel_requested_at") != null,
+                row.getInt("attempt_no"), row.getInt("max_attempts")
         ), attemptId);
         if (attempts.isEmpty()) {
             throw new AttemptNotFoundException(attemptId);
@@ -415,6 +429,7 @@ public class WorkerExecutionService {
             JobState state,
             int maxAttempts,
             JsonNode snapshot,
+            Instant nextAttemptAt,
             String taskType,
             String artifactPath,
             String inputSha256
@@ -429,7 +444,9 @@ public class WorkerExecutionService {
             Instant finishedAt,
             long workerId,
             Instant leaseExpiresAt,
-            boolean cancelRequested
+            boolean cancelRequested,
+            int attemptNo,
+            int maxAttempts
     ) {
     }
 }

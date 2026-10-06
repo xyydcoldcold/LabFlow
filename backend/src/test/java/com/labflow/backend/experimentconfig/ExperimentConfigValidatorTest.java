@@ -61,6 +61,20 @@ class ExperimentConfigValidatorTest {
                 .hasMessageContaining("taskType must be pyscf.single_point");
     }
 
+    @Test
+    void acceptsOnlyBoundedWhitelistedDemoConfigurations() {
+        ObjectNode demo = JsonNodeFactory.instance.objectNode().put("schemaVersion", 1)
+                .put("taskType", "demo.sleep_hash").put("sleepSeconds", 3)
+                .put("maxMemoryMb", 1024).put("timeoutSeconds", 30);
+        assertThat(validator.validate(demo)).isEqualTo(demo);
+        assertThatThrownBy(() -> validator.validate(demo.deepCopy().put("sleepSeconds", 31)))
+                .isInstanceOf(InvalidExperimentConfigException.class);
+        assertThatThrownBy(() -> validator.validate(demo.deepCopy().put("command", "arbitrary")))
+                .isInstanceOf(InvalidExperimentConfigException.class);
+        assertThatThrownBy(() -> new ExperimentConfigValidator(1024, 300).validate(demo.deepCopy().put("maxMemoryMb", 2048)))
+                .isInstanceOf(InvalidExperimentConfigException.class);
+    }
+
     private ObjectNode validSpec() {
         return JsonNodeFactory.instance.objectNode()
                 .put("schemaVersion", 1)

@@ -40,6 +40,19 @@ public class ExperimentConfigValidator {
             throw invalid("spec must be a JSON object");
         }
 
+        if ("demo.sleep_hash".equals(spec.path("taskType").asString(""))) {
+            Set<String> fields = Set.of("schemaVersion", "taskType", "sleepSeconds", "maxMemoryMb", "timeoutSeconds");
+            for (String field : spec.propertyNames()) if (!fields.contains(field)) throw invalid("unsupported field: " + field);
+            for (String field : fields) if (!spec.has(field)) throw invalid("missing required field: " + field);
+            requireInteger(spec, "schemaVersion", 1, 1);
+            requireInteger(spec, "maxMemoryMb", 128, maxMemoryMb);
+            requireInteger(spec, "timeoutSeconds", 1, maxTimeoutSeconds);
+            if (!spec.get("sleepSeconds").isNumber() || !Double.isFinite(spec.get("sleepSeconds").doubleValue())
+                    || spec.get("sleepSeconds").doubleValue() < 0 || spec.get("sleepSeconds").doubleValue() > 30)
+                throw invalid("sleepSeconds must be between 0 and 30");
+            return spec.deepCopy();
+        }
+
         for (String field : spec.propertyNames()) {
             if (!FIELDS.contains(field)) {
                 throw invalid("unsupported field: " + field);

@@ -8,6 +8,7 @@ import java.util.List;
 
 import com.labflow.backend.messaging.JobEventPublisher;
 import com.labflow.backend.messaging.JobQueuedMessage;
+import com.labflow.backend.messaging.RabbitTopology;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -63,10 +64,18 @@ public class OutboxBatchService {
         int failed = 0;
         for (PendingEvent event : events) {
             try {
-                if (!"JOB_QUEUED".equals(event.eventType())) {
-                    throw new IllegalArgumentException("Unsupported outbox event type: " + event.eventType());
+                if ("JOB_QUEUED".equals(event.eventType())) {
+                    eventPublisher.publish(event.toMessage());
+                } else {
+                    String route = switch (event.eventType()) {
+                        case "JOB_RETRY_15S" -> RabbitTopology.RETRY_15S_ROUTING_KEY;
+                        case "JOB_RETRY_60S" -> RabbitTopology.RETRY_60S_ROUTING_KEY;
+                        case "JOB_RETRY_300S" -> RabbitTopology.RETRY_300S_ROUTING_KEY;
+                        case "JOB_DEAD" -> RabbitTopology.JOBS_DEAD_ROUTING_KEY;
+                        default -> throw new IllegalArgumentException("Unsupported outbox event type: " + event.eventType());
+                    };
+                    eventPublisher.publishTo(event.toMessage(), route);
                 }
-                eventPublisher.publish(event.toMessage());
                 jdbcTemplate.update("""
                         UPDATE outbox_events
                         SET published_at = ?, last_error = NULL

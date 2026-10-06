@@ -18,17 +18,20 @@ public class RecoveryBatchService {
     private final RecoveryProperties properties;
     private final JobStateMachine stateMachine;
     private final Clock clock;
+    private final JobDispatchService dispatch;
 
     public RecoveryBatchService(
             JdbcTemplate jdbcTemplate,
             RecoveryProperties properties,
             JobStateMachine stateMachine,
-            Clock clock
+            Clock clock,
+            JobDispatchService dispatch
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
         this.stateMachine = stateMachine;
         this.clock = clock;
+        this.dispatch = dispatch;
     }
 
     @Transactional
@@ -93,30 +96,16 @@ public class RecoveryBatchService {
                     attempt.cancelRequested() ? "CANCEL_REQUESTED" : "LEASE_EXPIRED",
                     attempt.maxAttempts(), Timestamp.from(now));
             if (canRetry) {
-                enqueue(attempt.jobId(), now);
+                dispatch.retry(attempt.jobId(), attempt.attemptNo());
                 requeued++;
             } else if (attempt.cancelRequested()) {
                 cancelled++;
             } else {
+                dispatch.dead(attempt.jobId());
                 exhausted++;
             }
         }
         return new RecoveryBatchResult(attempts.size(), requeued, exhausted, cancelled, skipped);
-    }
-
-    private void enqueue(long jobId, Instant now) {
-        Long eventId = jdbcTemplate.queryForObject("""
-                INSERT INTO outbox_events (aggregate_id, event_type, payload, created_at, available_at)
-                VALUES (?, 'JOB_QUEUED', '{}'::jsonb, ?, ?)
-                RETURNING id
-                """, Long.class, jobId, Timestamp.from(now), Timestamp.from(now));
-        requireOneRow(jdbcTemplate.update("""
-                UPDATE outbox_events
-                SET payload = jsonb_build_object(
-                    'jobId', ?::bigint, 'eventId', ?::bigint, 'schemaVersion', 1
-                )
-                WHERE id = ?
-                """, jobId, eventId, eventId), "outbox event");
     }
 
     private void requireOneRow(int updated, String resource) {

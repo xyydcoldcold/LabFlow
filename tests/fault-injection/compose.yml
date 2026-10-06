@@ -1,0 +1,80 @@
+# Isolated acceptance stack; do not merge with the development/production stack.
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: labflow
+      POSTGRES_USER: labflow
+      POSTGRES_PASSWORD: week5-isolated-test-password
+    volumes: [database:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U labflow -d labflow']
+      interval: 1s
+      timeout: 3s
+      retries: 30
+  rabbitmq:
+    image: rabbitmq:4-management-alpine
+    environment:
+      RABBITMQ_DEFAULT_USER: labflow
+      RABBITMQ_DEFAULT_PASS: week5-isolated-test-password
+    healthcheck:
+      test: [CMD, rabbitmq-diagnostics, -q, ping]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+  backend:
+    image: labflow-backend:week5-acceptance
+    build:
+      context: ../..
+      dockerfile_inline: |
+        FROM labflow-backend:local
+        COPY backend/build/libs/backend-0.0.1-SNAPSHOT.jar /app/app.jar
+    environment:
+      DB_URL: jdbc:postgresql://postgres:5432/labflow
+      DB_USERNAME: labflow
+      DB_PASSWORD: week5-isolated-test-password
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: labflow
+      RABBITMQ_PASSWORD: week5-isolated-test-password
+      ARTIFACT_ROOT: /var/lib/labflow/artifacts
+      WORKER_ATTEMPT_LEASE: PT5S
+      RECOVERY_REAPER_FIXED_DELAY: PT1S
+      RECOVERY_REAPER_INITIAL_DELAY: PT1S
+      OUTBOX_PUBLISHER_FIXED_DELAY: PT0.2S
+    ports: ['127.0.0.1:18085:8080']
+    volumes: [artifacts:/var/lib/labflow/artifacts]
+    depends_on:
+      postgres: {condition: service_healthy}
+      rabbitmq: {condition: service_healthy}
+  worker-a: &worker
+    image: labflow-worker:week5-acceptance
+    build:
+      context: ../../worker
+      dockerfile_inline: |
+        FROM labflow-worker:local
+        COPY src /app/src
+        ENV PYTHONPATH=/app/src
+    init: true
+    restart: 'no'
+    environment: &worker-env
+      WORKER_INSTANCE_NAME: worker-a
+      LABFLOW_API_URL: http://backend:8080
+      LABFLOW_SERVICE_TOKEN: labflow-local-worker-service-token-change-me
+      RABBITMQ_HOST: rabbitmq
+      RABBITMQ_USERNAME: labflow
+      RABBITMQ_PASSWORD: week5-isolated-test-password
+      WORKER_IMAGE_DIGEST: week5-acceptance-source
+    volumes: [artifacts:/var/lib/labflow/artifacts:ro]
+  worker-b:
+    <<: *worker
+    environment:
+      <<: *worker-env
+      WORKER_INSTANCE_NAME: worker-b
+  frontend:
+    image: labflow-frontend:week5-acceptance
+    build: ../../frontend
+    ports: ['127.0.0.1:13085:8080']
+    depends_on: [backend]
+volumes:
+  database:
+  artifacts:

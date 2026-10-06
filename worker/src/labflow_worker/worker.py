@@ -133,7 +133,7 @@ class Worker:
 
 
 def _failure(error: Exception) -> dict[str, Any]:
-    code = error.code if isinstance(error, TaskExecutionError) else "TASK_FAILED"
+    code = error.code if isinstance(error, (TaskExecutionError, ApiError)) else "TASK_FAILED"
     return {
         "code": code,
         "message": str(error) or type(error).__name__,

@@ -8,6 +8,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .errors import TaskExecutionError
+
 
 def run_demo_sleep_hash(
     input_path: str,
@@ -80,6 +82,8 @@ def run_pyscf_single_point(
     energy = float(calculation.kernel())
     duration = time.perf_counter() - started
     converged = bool(calculation.converged)
+    if not converged:
+        raise TaskExecutionError("SCF_NOT_CONVERGED", "SCF did not converge; automatic retry is disabled")
     print(f"SCF finished: converged={converged} energy={energy:.15f} Eh", flush=True)
     return {
         "summary": {

@@ -30,6 +30,11 @@ public class RabbitJobEventPublisher implements JobEventPublisher {
 
     @Override
     public void publish(JobQueuedMessage jobMessage) {
+        publishTo(jobMessage, RabbitTopology.JOBS_ROUTING_KEY);
+    }
+
+    @Override
+    public void publishTo(JobQueuedMessage jobMessage, String routingKey) {
         Message message = MessageBuilder.withBody(jobMessage.toJsonBytes())
                 .setContentType("application/json")
                 .setContentEncoding("UTF-8")
@@ -38,8 +43,9 @@ public class RabbitJobEventPublisher implements JobEventPublisher {
                 .build();
         CorrelationData correlation = new CorrelationData(Long.toString(jobMessage.eventId()));
         rabbitTemplate.send(
-                RabbitTopology.JOBS_EXCHANGE,
-                RabbitTopology.JOBS_ROUTING_KEY,
+                RabbitTopology.JOBS_DEAD_ROUTING_KEY.equals(routingKey)
+                        ? RabbitTopology.JOBS_DLX : RabbitTopology.JOBS_EXCHANGE,
+                routingKey,
                 message,
                 correlation
         );

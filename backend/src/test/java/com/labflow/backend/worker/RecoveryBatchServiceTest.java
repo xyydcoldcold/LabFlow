@@ -29,7 +29,8 @@ class RecoveryBatchServiceTest {
     private static final Instant NOW = Instant.parse("2026-10-05T12:00:00Z");
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final RecoveryBatchService service = new RecoveryBatchService(
-            jdbc, new RecoveryProperties(50), new JobStateMachine(), Clock.fixed(NOW, ZoneOffset.UTC));
+            jdbc, new RecoveryProperties(50), new JobStateMachine(), Clock.fixed(NOW, ZoneOffset.UTC),
+            new JobDispatchService(jdbc, Clock.fixed(NOW, ZoneOffset.UTC)));
 
     @BeforeEach
     void candidate() throws Exception {

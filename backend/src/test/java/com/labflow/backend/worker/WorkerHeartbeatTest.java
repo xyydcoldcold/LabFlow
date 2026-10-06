@@ -39,7 +39,8 @@ class WorkerHeartbeatTest {
             jdbc, new ObjectMapper(),
             new WorkerProperties("test-service-token-at-least-32-bytes", Duration.ofSeconds(30)),
             mock(ArtifactStorageProperties.class), mock(JobStateMachine.class),
-            mock(JobLogStreamService.class), Clock.fixed(NOW, ZoneOffset.UTC));
+            mock(JobLogStreamService.class), Clock.fixed(NOW, ZoneOffset.UTC),
+            new JobDispatchService(jdbc, Clock.fixed(NOW, ZoneOffset.UTC)));
 
     @BeforeEach
     void activeAttempt() throws Exception {

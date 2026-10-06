@@ -23,17 +23,20 @@ public class JobController {
     private final JobQueryService queryService;
     private final JobLogStreamService logStreamService;
     private final JobCancellationService cancellationService;
+    private final JobReplayService replayService;
 
     public JobController(
             JobSubmissionService submissionService,
             JobQueryService queryService,
             JobLogStreamService logStreamService,
-            JobCancellationService cancellationService
+            JobCancellationService cancellationService,
+            JobReplayService replayService
     ) {
         this.submissionService = submissionService;
         this.queryService = queryService;
         this.logStreamService = logStreamService;
         this.cancellationService = cancellationService;
+        this.replayService = replayService;
     }
 
     @PostMapping
@@ -52,6 +55,15 @@ public class JobController {
     @PostMapping("/{jobId}/cancel")
     public JobCancellationResponse cancel(@AuthenticationPrincipal Jwt jwt, @PathVariable long jobId) {
         return cancellationService.cancel(jobId, Long.parseLong(jwt.getSubject()));
+    }
+
+    @PostMapping("/{jobId}/replay")
+    public ResponseEntity<JobResponse> replay(
+            @AuthenticationPrincipal Jwt jwt, @PathVariable long jobId,
+            @RequestHeader("Idempotency-Key") String key
+    ) {
+        JobResponse job = replayService.replay(jobId, Long.parseLong(jwt.getSubject()), key);
+        return ResponseEntity.created(URI.create("/api/jobs/" + job.id())).body(job);
     }
 
     @GetMapping("/{jobId}")

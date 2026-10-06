@@ -77,3 +77,13 @@ def test_executor_kills_child_when_lease_is_lost(tmp_path: Path, monkeypatch) ->
 
     assert len(children) == 1
     assert children[0].poll() is not None
+
+
+def test_child_preserves_typed_input_failure(tmp_path: Path) -> None:
+    input_path = tmp_path / "input.xyz"
+    input_path.write_text("payload")
+    bad = claim(input_path, 0, 5)
+    bad["inputSha256"] = "0" * 64
+    with pytest.raises(TaskExecutionError) as raised:
+        execute_task(bad, "test", lambda *_: None)
+    assert raised.value.code == "INVALID_INPUT"

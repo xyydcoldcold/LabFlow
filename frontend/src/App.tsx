@@ -333,7 +333,7 @@ function ProjectWorkspace({ token, project }: { token: string; project: Project 
       {error && <div className="page-error" role="alert"><strong>Workspace could not be loaded.</strong><span>{error}</span><button onClick={refresh}>Retry</button></div>}
       {loading ? <ContentSkeleton /> : (
         <>
-          {tab === "jobs" && <JobsPanel token={token} projectId={project.id} inputs={inputs} configs={configs} canContribute={canContribute} jobs={jobs} onJobUpdated={updateJob} onJobCreated={(job) => setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)])} />}
+          {tab === "jobs" && <JobsPanel token={token} canManage={project.currentUserRole === "OWNER" || project.currentUserRole === "MAINTAINER"} projectId={project.id} inputs={inputs} configs={configs} canContribute={canContribute} jobs={jobs} onJobUpdated={updateJob} onJobCreated={(job) => setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)])} />}
           {tab === "inputs" && <InputsPanel token={token} projectId={project.id} inputs={inputs} canContribute={canContribute} onChanged={refresh} />}
           {tab === "configs" && <ConfigsPanel token={token} projectId={project.id} configs={configs} canContribute={canContribute} onChanged={refresh} />}
           {tab === "members" && <MembersPanel token={token} project={project} members={members} canManage={canManageMembers} onChanged={refresh} />}
@@ -343,15 +343,33 @@ function ProjectWorkspace({ token, project }: { token: string; project: Project 
   );
 }
 
-function JobsPanel({ token, projectId, inputs, configs, canContribute, jobs, onJobUpdated, onJobCreated }: {
+function JobsPanel({ token, projectId, inputs, configs, canContribute, canManage, jobs, onJobUpdated, onJobCreated }: {
   token: string; projectId: number; inputs: MolecularInput[]; configs: ExperimentConfig[];
-  canContribute: boolean; jobs: JobSummary[]; onJobUpdated: (job: JobDetails) => void;
+  canContribute: boolean; canManage: boolean; jobs: JobSummary[]; onJobUpdated: (job: JobDetails) => void;
   onJobCreated: (job: JobSummary) => void;
 }) {
   const [selectedId, setSelectedId] = useState<number | null>(jobs[0]?.id ?? null);
   const [details, setDetails] = useState<JobDetails | null>(null);
   const [error, setError] = useState("");
   const [streamState, setStreamState] = useState("Connecting live logs…");
+  const [replaying, setReplaying] = useState(false);
+  const replayInFlight = useRef(false);
+  const replayKey = useRef<{ jobId: number; key: string } | null>(null);
+  async function replay() {
+    if (!details || replayInFlight.current) return;
+    replayInFlight.current = true;
+    const sourceId = details.id;
+    if (replayKey.current?.jobId !== sourceId) replayKey.current = { jobId: sourceId, key: crypto.randomUUID() };
+    setReplaying(true);
+    try {
+      const job = await apiRequest<JobSummary>(`/api/jobs/${sourceId}/replay`, {
+        token, method: "POST", headers: { "Idempotency-Key": replayKey.current.key },
+      });
+      onJobCreated(job); setSelectedId(job.id); replayKey.current = null; setError("");
+    } catch (requestError) { setError(messageFrom(requestError)); }
+    finally { replayInFlight.current = false; setReplaying(false); }
+  }
+
 
   useEffect(() => {
     if (jobs.length === 0) { setSelectedId(null); setDetails(null); return; }
@@ -414,6 +432,8 @@ function JobsPanel({ token, projectId, inputs, configs, canContribute, jobs, onJ
           {summary.converged !== undefined && <div><small>Converged</small><strong>{summary.converged ? "Yes" : "No"}</strong></div>}
           {summary.durationSeconds !== undefined && <div><small>Runtime</small><strong>{Number(summary.durationSeconds).toFixed(2)}s</strong></div>}
         </div></div>}
+        {details.status === "FAILED" && canManage && <button className="secondary-button" disabled={replaying} onClick={() => void replay()}>{replaying ? "Creating replay…" : "Replay as a new job"}</button>}
+        {details.attempts.length > 0 && <details className="manifest"><summary>Attempt history and failures</summary><ul>{details.attempts.map((attempt) => <li key={attempt.id}>Attempt {attempt.attemptNo} · {attempt.workerInstance} · {attempt.status}{attempt.failure && <> — {String(attempt.failure.code ?? "Failure")}: {String(attempt.failure.message ?? "No details")}</>}</li>)}</ul></details>}
         {latestAttempt?.failure && <div className="inline-error"><strong>{String(latestAttempt.failure.code ?? "Task failed")}</strong><br />{String(latestAttempt.failure.message ?? "The worker reported a failure.")}</div>}
         <div className="log-heading"><span className="eyebrow">Worker log</span><small aria-live="polite">{streamState} · {details.logs.length} chunks</small></div>
         <pre className="job-log">{details.logs.length ? details.logs.map((log) => `[${log.stream}] ${log.content}`).join("") : "Waiting for worker output…"}</pre>
