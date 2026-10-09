@@ -110,6 +110,7 @@ class WorkerCancellationIntegrationTest {
         requestCancel(attempt, attempt.userId(), 200, "RUNNING");
         mvc.perform(get("/api/jobs/{id}", attempt.jobId()).with(jwt().jwt(j -> j.subject(Long.toString(attempt.userId())))))
                 .andExpect(status().isOk())
+                .andExpect(jsonPath("$.canCancel").value(true))
                 .andExpect(jsonPath("$.cancelRequestedAt").value(NOW.toString()));
         mvc.perform(workerRequest(attempt, "heartbeat", "{}"))
                 .andExpect(status().isOk()).andExpect(jsonPath("$.cancelRequested").value(true));
@@ -157,6 +158,12 @@ class WorkerCancellationIntegrationTest {
         if (!role.equals("OUTSIDER")) {
             jdbc.update("INSERT INTO project_members (project_id, user_id, role) VALUES (?, ?, ?)",
                     attempt.projectId(), userId, role);
+        }
+        mvc.perform(get("/api/jobs/{id}", attempt.jobId()).with(jwt().jwt(j -> j.subject(Long.toString(userId)))))
+                .andExpect(status().is(role.equals("OUTSIDER") ? 403 : 200));
+        if (!role.equals("OUTSIDER")) {
+            mvc.perform(get("/api/jobs/{id}", attempt.jobId()).with(jwt().jwt(j -> j.subject(Long.toString(userId)))))
+                    .andExpect(jsonPath("$.canCancel").value(false));
         }
         requestCancel(attempt, userId, 403, null);
         assertThat(jdbc.queryForObject("SELECT cancel_requested_at IS NULL FROM jobs", Boolean.class)).isTrue();

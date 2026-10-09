@@ -85,6 +85,10 @@ export interface JobResult {
 }
 
 export interface JobDetails extends JobSummary {
+  cancelRequestedAt?: string | null;
+  canCancel?: boolean;
+  events?: { id: number; fromStatus: JobStatus | null; toStatus: JobStatus; eventType: string;
+    details: Record<string, unknown>; createdAt: string }[];
   specSnapshot: {
     molecularInput?: { originalFilename?: string; sha256?: string };
     experimentConfig?: { name?: string; version?: number; spec?: ExperimentSpec };

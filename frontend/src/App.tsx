@@ -18,6 +18,7 @@ import {
 } from "./api";
 import { streamJobLogs } from "./job-stream";
 import { filterJobs, formatDuration, jobStatuses, jobTiming, PAGE_SIZE, readJobFilters, type JobFilters } from "./job-list";
+import { JobHistory, JobComparison } from "./JobPresentation";
 import "./styles.css";
 
 type WorkspaceTab = "jobs" | "inputs" | "configs" | "members";
@@ -404,6 +405,26 @@ function JobsPanel({ projects, onSelectProject, token, projectId, inputs, config
     return () => { window.removeEventListener("popstate", restore); window.clearInterval(timer); };
   }, []);
 
+  const [comparisonIds, setComparisonIds] = useState<number[]>([]);
+  const [showComparison, setShowComparison] = useState(false);
+  const [detailRefresh, setDetailRefresh] = useState(0);
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
+  const cancelInFlight = useRef(false);
+  const [cancelError, setCancelError] = useState<{ id: number; message: string } | null>(null);
+  function toggleComparison(id: number) {
+    setComparisonIds((current) => current.includes(id) ? current.filter((item) => item !== id) : current.length < 5 ? [...current, id] : current);
+    setShowComparison(false);
+  }
+  async function cancelJob(job: JobDetails) {
+    if (cancelInFlight.current || !job.canCancel || job.cancelRequestedAt) return;
+    cancelInFlight.current = true; setCancellingId(job.id); setCancelError(null);
+    try {
+      await apiRequest(`/api/jobs/${job.id}/cancel`, { token, method: "POST" });
+      setDetailRefresh((value) => value + 1);
+    } catch (error) { setCancelError({ id: job.id, message: messageFrom(error) }); }
+    finally { cancelInFlight.current = false; setCancellingId(null); }
+  }
+
   const [selectedId, setSelectedId] = useState<number | null>(jobs[0]?.id ?? null);
   const [details, setDetails] = useState<JobDetails | null>(null);
   const [error, setError] = useState("");
@@ -465,12 +486,14 @@ function JobsPanel({ projects, onSelectProject, token, projectId, inputs, config
     };
     void load();
     return () => { cancelled = true; controller.abort(); if (timer !== undefined) window.clearTimeout(timer); };
-  }, [onJobUpdated, selectedId, token]);
+  }, [detailRefresh, onJobUpdated, selectedId, token]);
 
   const summary = details?.result?.summary;
   const latestAttempt = details?.attempts.at(-1);
   return <>
     {canContribute ? <JobSubmissionForm projects={projects} onSelectProject={onSelectProject} token={token} projectId={projectId} inputs={inputs} configs={configs} onCreated={(job) => { onJobCreated(job); changeFilters({ status: "ALL", query: "", page: 1 }); setSelectedId(job.id); }} /> : <ReadOnlyNote text="Your viewer role can inspect jobs and results. A project contributor can submit calculations." />}
+    {jobs.length > 0 && <section className="comparison-toolbar" aria-label="Select experiments to compare"><span>Select 2–5 successful jobs · {comparisonIds.length} selected</span><button className="primary-button" disabled={comparisonIds.length < 2} onClick={() => setShowComparison(true)}>Compare selected jobs</button><button className="secondary-button" disabled={!comparisonIds.length} onClick={() => { setComparisonIds([]); setShowComparison(false); }}>Clear selection</button></section>}
+    {showComparison && <JobComparison token={token} ids={comparisonIds} onClose={() => setShowComparison(false)} />}
     {jobs.length === 0 ? <section className="content-card main-card"><EmptyList title="No jobs yet" text="Choose an input and configuration above to run your first calculation." /></section> : <section className="jobs-layout">
     <div className="content-card job-list-card">
       <div className="card-heading"><div><span className="eyebrow">Execution history</span><h2>Jobs</h2></div></div>
@@ -481,9 +504,9 @@ function JobsPanel({ projects, onSelectProject, token, projectId, inputs, config
       <p className="muted job-count" aria-live="polite">{filteredJobs.length} matching jobs · newest first</p>
       <div className="job-list">{visibleJobs.map((job) => {
         const timing = jobTiming(job, now);
-        return <button key={job.id} className={job.id === selectedId ? "job-row active" : "job-row"} onClick={() => setSelectedId(job.id)}>
+        return <div className="job-list-entry" key={job.id}><input className="compare-checkbox" type="checkbox" aria-label={`Compare job #${job.id}`} checked={comparisonIds.includes(job.id)} disabled={job.status !== "SUCCEEDED" || (!comparisonIds.includes(job.id) && comparisonIds.length >= 5)} onChange={() => toggleComparison(job.id)} /><button className={job.id === selectedId ? "job-row active" : "job-row"} onClick={() => setSelectedId(job.id)}>
           <span><strong>Job #{job.id}</strong><small>{formatDate(job.createdAt)}</small><small title="Total time across all attempts, including retry waits">Waiting {formatDuration(timing.waiting)} · Running {formatDuration(timing.running)}</small></span><StatusBadge status={job.status} />
-        </button>;
+        </button></div>;
       })}</div>
       {!filteredJobs.length && <EmptyList title="No matching jobs" text="Try another status or job ID." />}
       <nav className="pagination" aria-label="Job pages"><button className="secondary-button" disabled={page <= 1} onClick={() => changeFilters({ ...filters, page: page - 1 })}>Previous</button><span>Page {page} of {pages}</span><button className="secondary-button" disabled={page >= pages} onClick={() => changeFilters({ ...filters, page: page + 1 })}>Next</button></nav>
@@ -499,7 +522,9 @@ function JobsPanel({ projects, onSelectProject, token, projectId, inputs, config
           {summary.durationSeconds !== undefined && <div><small>Runtime</small><strong>{Number(summary.durationSeconds).toFixed(2)}s</strong></div>}
         </div></div>}
         {details.status === "FAILED" && canManage && <button className="secondary-button" disabled={replaying} onClick={() => void replay()}>{replaying ? "Creating replay…" : "Replay as a new job"}</button>}
-        {details.attempts.length > 0 && <details className="manifest"><summary>Attempt history and failures</summary><ul>{details.attempts.map((attempt) => <li key={attempt.id}>Attempt {attempt.attemptNo} · {attempt.workerInstance} · {attempt.status}{attempt.failure && <> — {String(attempt.failure.code ?? "Failure")}: {String(attempt.failure.message ?? "No details")}</>}</li>)}</ul></details>}
+        {details.canCancel && !details.cancelRequestedAt && <button className="secondary-button" disabled={cancellingId !== null} onClick={() => void cancelJob(details)}>{cancellingId === details.id ? "Requesting cancellation…" : "Cancel job"}</button>}
+        {cancelError?.id === details.id && <div className="inline-error" role="alert">{cancelError.message}</div>}
+        <JobHistory job={details} />
         {latestAttempt?.failure && <div className="inline-error"><strong>{String(latestAttempt.failure.code ?? "Task failed")}</strong><br />{String(latestAttempt.failure.message ?? "The worker reported a failure.")}</div>}
         <div className="log-heading"><span className="eyebrow">Worker log</span><small aria-live="polite">{streamState} · {details.logs.length} chunks</small></div>
         <pre className="job-log">{details.logs.length ? details.logs.map((log) => `[${log.stream}] ${log.content}`).join("") : "Waiting for worker output…"}</pre>

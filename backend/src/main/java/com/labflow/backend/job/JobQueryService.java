@@ -5,6 +5,7 @@ import java.sql.SQLException;
 import java.util.List;
 
 import com.labflow.backend.project.ProjectPermissionService;
+import com.labflow.backend.project.ProjectRole;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -60,20 +61,30 @@ public class JobQueryService {
     public JobDetailsResponse get(long jobId, long userId) {
         List<JobRow> jobs = jdbcTemplate.query("""
                 SELECT id, project_id, molecular_input_id, experiment_config_id,
-                       status, spec_snapshot::text AS spec_snapshot, created_at, updated_at, cancel_requested_at
+                       status, spec_snapshot::text AS spec_snapshot, created_at, updated_at, cancel_requested_at, submitted_by
                 FROM jobs WHERE id = ?
                 """, (row, rowNumber) -> new JobRow(
                 row.getLong("id"), row.getLong("project_id"),
                 row.getLong("molecular_input_id"), row.getLong("experiment_config_id"),
                 JobState.valueOf(row.getString("status")), readJson(row.getString("spec_snapshot")),
                 row.getTimestamp("created_at").toInstant(), row.getTimestamp("updated_at").toInstant(),
-                nullableInstant(row, "cancel_requested_at")
+                nullableInstant(row, "cancel_requested_at"), row.getLong("submitted_by")
         ), jobId);
         if (jobs.isEmpty()) {
             throw new JobNotFoundException(jobId);
         }
         JobRow job = jobs.getFirst();
-        permissionService.requireView(job.projectId(), userId);
+        ProjectRole role = permissionService.requireView(job.projectId(), userId);
+        boolean canCancel = !job.status().isTerminal() && role != ProjectRole.VIEWER
+                && (job.submittedBy() == userId || role == ProjectRole.OWNER || role == ProjectRole.MAINTAINER);
+        List<JobEventResponse> events = jdbcTemplate.query("""
+                SELECT id, from_status, to_status, event_type, details::text AS details, created_at
+                FROM job_events WHERE job_id = ? ORDER BY created_at, id
+                """, (row, rowNumber) -> new JobEventResponse(
+                row.getLong("id"), row.getString("from_status"), row.getString("to_status"),
+                row.getString("event_type"), readJson(row.getString("details")),
+                row.getTimestamp("created_at").toInstant()
+        ), jobId);
 
         List<JobAttemptResponse> attempts = jdbcTemplate.query("""
                 SELECT a.id, a.attempt_no, a.status, a.worker_id, w.instance_name,
@@ -106,7 +117,7 @@ public class JobQueryService {
         ), jobId);
         return new JobDetailsResponse(
                 job.id(), job.projectId(), job.molecularInputId(), job.experimentConfigId(),
-                job.status(), job.specSnapshot(), job.createdAt(), job.updatedAt(), job.cancelRequestedAt(),
+                job.status(), job.specSnapshot(), job.createdAt(), job.updatedAt(), job.cancelRequestedAt(), canCancel, events,
                 attempts, logs, results.isEmpty() ? null : results.getFirst()
         );
     }
@@ -137,7 +148,8 @@ public class JobQueryService {
             JsonNode specSnapshot,
             java.time.Instant createdAt,
             java.time.Instant updatedAt,
-            java.time.Instant cancelRequestedAt
+            java.time.Instant cancelRequestedAt,
+            long submittedBy
     ) {
     }
 }

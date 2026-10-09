@@ -117,3 +117,103 @@ test("mobile wizard and filters fit the viewport", async ({ page }, testInfo) =>
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
   await page.screenshot({ path: testInfo.outputPath("week6-mobile.png"), fullPage: true });
 });
+
+function savedDetails(job: { id: number; status: string }, basis = "sto-3g") {
+  return { ...job, canCancel: false, cancelRequestedAt: null,
+    specSnapshot: { molecularInput: { originalFilename: "h2.xyz", sha256: "a".repeat(64) }, experimentConfig: { name: "H2 baseline", version: 1, spec: { method: "RHF", basis, charge: 0, spin: 0 } } },
+    attempts: [{ id: 1, attemptNo: 1, status: "LOST", workerId: 1, workerInstance: "worker-a", startedAt: "2026-10-08T00:00:00Z", finishedAt: "2026-10-08T00:00:20Z", failure: { code: "LEASE_EXPIRED", message: "Worker stopped renewing" } },
+      { id: 2, attemptNo: 2, status: "SUCCEEDED", workerId: 2, workerInstance: "worker-b", startedAt: "2026-10-08T00:00:40Z", finishedAt: "2026-10-08T00:01:00Z", failure: null }],
+    events: [{ id: 1, fromStatus: null, toStatus: "QUEUED", eventType: "JOB_SUBMITTED", details: {}, createdAt: "2026-10-08T00:00:00Z" },
+      { id: 2, fromStatus: "RUNNING", toStatus: "QUEUED", eventType: "ATTEMPT_LOST", details: { attemptId: 1 }, createdAt: "2026-10-08T00:00:20Z" },
+      { id: 3, fromStatus: "RUNNING", toStatus: "SUCCEEDED", eventType: "JOB_COMPLETED", details: {}, createdAt: "2026-10-08T00:01:00Z" }],
+    logs: [], result: { summary: { energyHartree: -1.1167593074, durationSeconds: 0.7 }, manifest: { environment: { python: "3.13", packages: { pyscf: "2.14" }, workerImageDigest: "sha256:test", specSha256: "b".repeat(64) } } } };
+}
+
+test("detail shows recorded timeline, takeover attempts and environment", async ({ page }) => {
+  const { jobs } = await workspace(page);
+  await page.route("**/api/jobs/24", (route) => route.fulfill({ json: savedDetails(jobs[0]!) }));
+  await page.goto("/");
+  await expect(page.locator(".job-timeline")).toContainText("RUNNING → QUEUED");
+  await expect(page.locator(".attempt-history table")).toContainText("worker-a");
+  await expect(page.locator(".attempt-history table")).toContainText("worker-b");
+  await expect(page.locator(".attempt-history table")).toContainText("LEASE_EXPIRED");
+  await expect(page.locator(".environment-summary")).toContainText("sha256:test");
+  await expect(page.getByRole("button", { name: "Cancel job", exact: true })).toHaveCount(0);
+});
+
+test("comparison selection spans pages, enforces 2–5, and highlights saved differences", async ({ page }, testInfo) => {
+  const { jobs } = await workspace(page);
+  await page.route(/\/api\/jobs\/\d+$/, (route) => {
+    const id = Number(new URL(route.request().url()).pathname.split("/").at(-1));
+    return route.fulfill({ json: savedDetails(jobs.find((job) => job.id === id)!, id === 24 ? "6-31g" : "sto-3g") });
+  });
+  await page.goto("/");
+  await expect(page.getByRole("button", { name: "Compare selected jobs" })).toBeDisabled();
+  await expect(page.getByLabel("Compare job #23", { exact: true })).toBeDisabled();
+  for (const id of [24, 22, 20, 18, 16]) await page.getByLabel(`Compare job #${id}`, { exact: true }).check();
+  await page.getByRole("button", { name: "Next", exact: true }).click();
+  await expect(page.getByLabel("Compare job #14", { exact: true })).toBeDisabled();
+  await page.getByRole("button", { name: "Compare selected jobs" }).click();
+  await expect(page.locator(".comparison-card thead th")).toHaveCount(6);
+  await expect(page.locator(".comparison-difference").filter({ hasText: "Basis" })).toContainText("6-31g");
+  await expect(page.locator(".comparison-warning")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("week6-comparison.png"), fullPage: true });
+  await page.getByRole("button", { name: "Clear selection" }).click();
+  await expect(page.locator(".comparison-card")).toHaveCount(0);
+  await expect(page.getByLabel("Compare job #14", { exact: true })).toBeEnabled();
+});
+
+test("comparison request errors can be retried and missing values are explicit", async ({ page }) => {
+  const { jobs } = await workspace(page);
+  let fail = true;
+  await page.route("**/api/jobs/22", (route) => {
+    if (fail) return route.fulfill({ status: 503, json: { message: "Result temporarily unavailable" } });
+    return route.fulfill({ json: { ...savedDetails(jobs.find((job) => job.id === 22)!), specSnapshot: {}, result: { summary: {}, manifest: {} } } });
+  });
+  await page.route("**/api/jobs/24", (route) => route.fulfill({ json: savedDetails(jobs[0]!) }));
+  await page.goto("/");
+  await page.getByLabel("Compare job #24", { exact: true }).check();
+  await page.getByLabel("Compare job #22", { exact: true }).check();
+  await page.getByRole("button", { name: "Compare selected jobs" }).click();
+  await expect(page.locator(".comparison-card [role=alert]")).toContainText("temporarily unavailable");
+  fail = false;
+  await page.getByRole("button", { name: "Retry comparison" }).click();
+  await expect(page.locator(".comparison-card tbody")).toContainText("—");
+});
+
+test("running cancellation retries safely and waits for worker acknowledgement", async ({ page }) => {
+  const { jobs } = await workspace(page);
+  let requested = false;
+  let requests = 0;
+  const running = { ...savedDetails(jobs[0]!), status: "RUNNING", canCancel: true, result: null };
+  await page.route("**/api/jobs/24", (route) => route.fulfill({ json: { ...running, cancelRequestedAt: requested ? "2026-10-08T00:02:00Z" : null } }));
+  await page.route("**/api/jobs/24/events", (route) => route.fulfill({ contentType: "text/event-stream", body: ":keepalive\n\n" }));
+  await page.route("**/api/jobs/24/cancel", async (route) => {
+    requests++;
+    if (requests === 1) return route.abort("failed");
+    requested = true;
+    await route.fulfill({ json: { jobId: 24, status: "RUNNING", cancelRequestedAt: "2026-10-08T00:02:00Z" } });
+  });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Cancel job", exact: true }).click();
+  await expect(page.locator(".job-detail-card [role=alert]")).toContainText("Could not reach");
+  await page.getByRole("button", { name: "Cancel job", exact: true }).click();
+  await expect(page.locator(".cancellation-note")).toContainText("Waiting for the worker to stop");
+  await expect(page.getByRole("button", { name: "Cancel job", exact: true })).toHaveCount(0);
+  expect(requests).toBe(2);
+});
+
+test("mobile comparison scrolls inside its table without widening the page", async ({ page }, testInfo) => {
+  const { jobs } = await workspace(page);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.route(/\/api\/jobs\/\d+$/, (route) => {
+    const id = Number(new URL(route.request().url()).pathname.split("/").at(-1));
+    return route.fulfill({ json: savedDetails(jobs.find((job) => job.id === id)!) });
+  });
+  await page.goto("/");
+  for (const id of [24, 22]) await page.getByLabel(`Compare job #${id}`, { exact: true }).check();
+  await page.getByRole("button", { name: "Compare selected jobs" }).click();
+  await expect(page.locator(".comparison-card tbody")).toContainText("sha256:test");
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  await page.screenshot({ path: testInfo.outputPath("mobile-comparison.png"), fullPage: true });
+});

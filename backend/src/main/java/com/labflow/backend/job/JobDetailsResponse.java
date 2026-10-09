@@ -15,6 +15,8 @@ public record JobDetailsResponse(
         Instant createdAt,
         Instant updatedAt,
         Instant cancelRequestedAt,
+        boolean canCancel,
+        List<JobEventResponse> events,
         List<JobAttemptResponse> attempts,
         List<JobLogChunkResponse> logs,
         JobResultResponse result

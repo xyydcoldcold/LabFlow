@@ -30,8 +30,7 @@ test("Week 5: inspect a real permanent failure, safely replay after response los
   await page.addInitScript((token) => localStorage.setItem("labflow.accessToken", token), owner.accessToken);
   await page.goto("/");
   await expect(page.locator(".job-detail-heading .status-badge")).toHaveText("FAILED", { timeout: 90_000 });
-  await page.getByText("Attempt history and failures", { exact: true }).click();
-  await expect(page.locator(".manifest ul")).toContainText("FAILED");
+  await expect(page.locator(".attempt-history table")).toContainText("FAILED");
   await page.screenshot({ path: testInfo.outputPath("week5-replay.png"), fullPage: true });
   const responses: { id: number; key: string }[] = [];
   await page.route(`**/api/jobs/${original.id}/replay`, async (route) => {
