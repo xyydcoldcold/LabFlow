@@ -32,17 +32,28 @@ public class JobQueryService {
     public List<JobSummaryResponse> list(long projectId, long userId) {
         permissionService.requireView(projectId, userId);
         return jdbcTemplate.query("""
-                SELECT id, project_id, molecular_input_id, experiment_config_id,
-                       status, created_at, updated_at
-                FROM jobs
-                WHERE project_id = ?
-                ORDER BY created_at DESC, id DESC
+                SELECT j.id, j.project_id, j.molecular_input_id, j.experiment_config_id,
+                       j.status, j.created_at, j.updated_at, CURRENT_TIMESTAMP AS measured_at,
+                       t.running_seconds,
+                       GREATEST(0, EXTRACT(EPOCH FROM (
+                           CASE WHEN j.status IN ('QUEUED', 'RUNNING') THEN CURRENT_TIMESTAMP
+                                ELSE j.updated_at END - j.created_at)) - t.running_seconds) AS waiting_seconds
+                FROM jobs j
+                CROSS JOIN LATERAL (
+                    SELECT COALESCE(SUM(GREATEST(0, EXTRACT(EPOCH FROM (
+                        COALESCE(a.finished_at, CURRENT_TIMESTAMP) - a.started_at)))), 0) AS running_seconds
+                    FROM job_attempts a WHERE a.job_id = j.id
+                ) t
+                WHERE j.project_id = ?
+                ORDER BY j.created_at DESC, j.id DESC
                 """, (row, rowNumber) -> new JobSummaryResponse(
                 row.getLong("id"), row.getLong("project_id"),
                 row.getLong("molecular_input_id"), row.getLong("experiment_config_id"),
                 JobState.valueOf(row.getString("status")),
                 row.getTimestamp("created_at").toInstant(),
-                row.getTimestamp("updated_at").toInstant()
+                row.getTimestamp("updated_at").toInstant(),
+                row.getDouble("waiting_seconds"), row.getDouble("running_seconds"),
+                row.getTimestamp("measured_at").toInstant()
         ), projectId);
     }
 

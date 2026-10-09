@@ -37,6 +37,7 @@ test("Week 4: upload H2, select a config, safely retry submission, and inspect a
     if (submissions.length === 1) await route.abort("failed");
     else await route.fulfill({ response });
   });
+  await page.getByRole("button", { name: "Review submission", exact: true }).click();
   await page.getByRole("button", { name: "Submit job", exact: true }).click();
   await expect(page.getByRole("alert")).toContainText("Could not reach");
   await page.getByRole("button", { name: "Retry submission", exact: true }).click();

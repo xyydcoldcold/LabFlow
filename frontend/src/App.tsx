@@ -17,6 +17,7 @@ import {
   ProjectMember,
 } from "./api";
 import { streamJobLogs } from "./job-stream";
+import { filterJobs, formatDuration, jobStatuses, jobTiming, PAGE_SIZE, readJobFilters, type JobFilters } from "./job-list";
 import "./styles.css";
 
 type WorkspaceTab = "jobs" | "inputs" | "configs" | "members";
@@ -48,7 +49,7 @@ export function App() {
     const visibleProjects = await apiRequest<Project[]>("/api/projects", { token: activeToken });
     setProjects(visibleProjects);
     setSelectedProjectId((current) => {
-      const requested = preferredId ?? current;
+      const requested = preferredId ?? current ?? Number(new URLSearchParams(window.location.search).get("project"));
       return visibleProjects.some((project) => project.id === requested)
         ? (requested ?? null)
         : (visibleProjects[0]?.id ?? null);
@@ -69,7 +70,8 @@ export function App() {
         if (cancelled) return;
         setUser(currentUser);
         setProjects(visibleProjects);
-        setSelectedProjectId(visibleProjects[0]?.id ?? null);
+        const requested = Number(new URLSearchParams(window.location.search).get("project"));
+        setSelectedProjectId(visibleProjects.find((project) => project.id === requested)?.id ?? visibleProjects[0]?.id ?? null);
       })
       .catch(() => {
         if (!cancelled) signOut();
@@ -81,6 +83,23 @@ export function App() {
       cancelled = true;
     };
   }, [signOut, token, user]);
+
+  useEffect(() => {
+    const restoreProject = () => {
+      const id = Number(new URLSearchParams(window.location.search).get("project"));
+      if (projects.some((project) => project.id === id)) setSelectedProjectId(id);
+    };
+    window.addEventListener("popstate", restoreProject);
+    return () => window.removeEventListener("popstate", restoreProject);
+  }, [projects]);
+
+  function selectProject(id: number) {
+    const url = new URL(window.location.href);
+    url.searchParams.set("project", String(id));
+    for (const key of ["status", "q", "page"]) url.searchParams.delete(key);
+    window.history.pushState(null, "", url);
+    setSelectedProjectId(id);
+  }
 
   function establishSession(response: AuthResponse) {
     localStorage.setItem(TOKEN_KEY, response.accessToken);
@@ -99,7 +118,7 @@ export function App() {
       user={user}
       projects={projects}
       selectedProject={selectedProject}
-      onSelectProject={setSelectedProjectId}
+      onSelectProject={selectProject}
       onProjectsChanged={loadProjects}
       onSignOut={signOut}
     />
@@ -236,7 +255,7 @@ function Dashboard(props: DashboardProps) {
       </aside>
 
       <section className="main-stage">
-        {selectedProject ? <ProjectWorkspace key={selectedProject.id} token={token} project={selectedProject} /> : <WelcomeEmpty onCreate={() => setShowCreateProject(true)} />}
+        {selectedProject ? <ProjectWorkspace key={selectedProject.id} token={token} project={selectedProject} projects={projects} onSelectProject={onSelectProject} /> : <WelcomeEmpty onCreate={() => setShowCreateProject(true)} />}
       </section>
 
       {showCreateProject && (
@@ -270,7 +289,7 @@ function WelcomeEmpty({ onCreate }: { onCreate: () => void }) {
   );
 }
 
-function ProjectWorkspace({ token, project }: { token: string; project: Project }) {
+function ProjectWorkspace({ token, project, projects, onSelectProject }: { token: string; project: Project; projects: Project[]; onSelectProject: (id: number) => void }) {
   const [tab, setTab] = useState<WorkspaceTab>("jobs");
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [inputs, setInputs] = useState<MolecularInput[]>([]);
@@ -308,6 +327,20 @@ function ProjectWorkspace({ token, project }: { token: string; project: Project 
     return () => { cancelled = true; };
   }, [project.id, refreshKey, token]);
 
+  useEffect(() => {
+    let cancelled = false;
+    let timer: number;
+    async function poll() {
+      try {
+        const current = await apiRequest<JobSummary[]>(`/api/projects/${project.id}/jobs`, { token });
+        if (!cancelled) setJobs(current);
+      } catch { /* Workspace retry and job detail errors remain available. */ }
+      finally { if (!cancelled) timer = window.setTimeout(poll, 5_000); }
+    }
+    timer = window.setTimeout(poll, 5_000);
+    return () => { cancelled = true; window.clearTimeout(timer); };
+  }, [project.id, token]);
+
   const canContribute = project.currentUserRole !== "VIEWER";
   const canManageMembers = project.currentUserRole === "OWNER";
   const namedConfigCount = useMemo(() => new Set(configs.map((config) => config.name)).size, [configs]);
@@ -333,7 +366,7 @@ function ProjectWorkspace({ token, project }: { token: string; project: Project 
       {error && <div className="page-error" role="alert"><strong>Workspace could not be loaded.</strong><span>{error}</span><button onClick={refresh}>Retry</button></div>}
       {loading ? <ContentSkeleton /> : (
         <>
-          {tab === "jobs" && <JobsPanel token={token} canManage={project.currentUserRole === "OWNER" || project.currentUserRole === "MAINTAINER"} projectId={project.id} inputs={inputs} configs={configs} canContribute={canContribute} jobs={jobs} onJobUpdated={updateJob} onJobCreated={(job) => setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)])} />}
+          {tab === "jobs" && <JobsPanel projects={projects} onSelectProject={onSelectProject} token={token} canManage={project.currentUserRole === "OWNER" || project.currentUserRole === "MAINTAINER"} projectId={project.id} inputs={inputs} configs={configs} canContribute={canContribute} jobs={jobs} onJobUpdated={updateJob} onJobCreated={(job) => setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)])} />}
           {tab === "inputs" && <InputsPanel token={token} projectId={project.id} inputs={inputs} canContribute={canContribute} onChanged={refresh} />}
           {tab === "configs" && <ConfigsPanel token={token} projectId={project.id} configs={configs} canContribute={canContribute} onChanged={refresh} />}
           {tab === "members" && <MembersPanel token={token} project={project} members={members} canManage={canManageMembers} onChanged={refresh} />}
@@ -343,11 +376,34 @@ function ProjectWorkspace({ token, project }: { token: string; project: Project 
   );
 }
 
-function JobsPanel({ token, projectId, inputs, configs, canContribute, canManage, jobs, onJobUpdated, onJobCreated }: {
+function JobsPanel({ projects, onSelectProject, token, projectId, inputs, configs, canContribute, canManage, jobs, onJobUpdated, onJobCreated }: {
+  projects: Project[]; onSelectProject: (id: number) => void;
   token: string; projectId: number; inputs: MolecularInput[]; configs: ExperimentConfig[];
   canContribute: boolean; canManage: boolean; jobs: JobSummary[]; onJobUpdated: (job: JobDetails) => void;
   onJobCreated: (job: JobSummary) => void;
 }) {
+  const [filters, setFilters] = useState<JobFilters>(() => readJobFilters(window.location.search));
+  const [now, setNow] = useState(Date.now());
+  const filteredJobs = filterJobs(jobs, filters);
+  const pages = Math.max(1, Math.ceil(filteredJobs.length / PAGE_SIZE));
+  const page = Math.min(filters.page, pages);
+  const visibleJobs = filteredJobs.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  function changeFilters(next: JobFilters) {
+    setFilters(next);
+    const url = new URL(window.location.href);
+    url.searchParams.set("project", String(projectId));
+    if (next.status === "ALL") url.searchParams.delete("status"); else url.searchParams.set("status", next.status);
+    if (!next.query) url.searchParams.delete("q"); else url.searchParams.set("q", next.query);
+    if (next.page === 1) url.searchParams.delete("page"); else url.searchParams.set("page", String(next.page));
+    window.history.pushState(null, "", url);
+  }
+  useEffect(() => {
+    const restore = () => setFilters(readJobFilters(window.location.search));
+    window.addEventListener("popstate", restore);
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => { window.removeEventListener("popstate", restore); window.clearInterval(timer); };
+  }, []);
+
   const [selectedId, setSelectedId] = useState<number | null>(jobs[0]?.id ?? null);
   const [details, setDetails] = useState<JobDetails | null>(null);
   const [error, setError] = useState("");
@@ -365,7 +421,7 @@ function JobsPanel({ token, projectId, inputs, configs, canContribute, canManage
       const job = await apiRequest<JobSummary>(`/api/jobs/${sourceId}/replay`, {
         token, method: "POST", headers: { "Idempotency-Key": replayKey.current.key },
       });
-      onJobCreated(job); setSelectedId(job.id); replayKey.current = null; setError("");
+      onJobCreated(job); changeFilters({ status: "ALL", query: "", page: 1 }); setSelectedId(job.id); replayKey.current = null; setError("");
     } catch (requestError) { setError(messageFrom(requestError)); }
     finally { replayInFlight.current = false; setReplaying(false); }
   }
@@ -414,13 +470,23 @@ function JobsPanel({ token, projectId, inputs, configs, canContribute, canManage
   const summary = details?.result?.summary;
   const latestAttempt = details?.attempts.at(-1);
   return <>
-    {canContribute ? <JobSubmissionForm token={token} projectId={projectId} inputs={inputs} configs={configs} onCreated={(job) => { onJobCreated(job); setSelectedId(job.id); }} /> : <ReadOnlyNote text="Your viewer role can inspect jobs and results. A project contributor can submit calculations." />}
+    {canContribute ? <JobSubmissionForm projects={projects} onSelectProject={onSelectProject} token={token} projectId={projectId} inputs={inputs} configs={configs} onCreated={(job) => { onJobCreated(job); changeFilters({ status: "ALL", query: "", page: 1 }); setSelectedId(job.id); }} /> : <ReadOnlyNote text="Your viewer role can inspect jobs and results. A project contributor can submit calculations." />}
     {jobs.length === 0 ? <section className="content-card main-card"><EmptyList title="No jobs yet" text="Choose an input and configuration above to run your first calculation." /></section> : <section className="jobs-layout">
     <div className="content-card job-list-card">
       <div className="card-heading"><div><span className="eyebrow">Execution history</span><h2>Jobs</h2></div></div>
-      <div className="job-list">{jobs.map((job) => <button key={job.id} className={job.id === selectedId ? "job-row active" : "job-row"} onClick={() => setSelectedId(job.id)}>
-        <span><strong>Job #{job.id}</strong><small>{formatDate(job.createdAt)}</small></span><StatusBadge status={job.id === details?.id ? details.status : job.status} />
-      </button>)}</div>
+      <div className="job-filters">
+        <label>Job status<select value={filters.status} onChange={(event) => changeFilters({ ...filters, status: event.target.value as JobFilters["status"], page: 1 })}><option value="ALL">All statuses</option>{jobStatuses.map((status) => <option key={status}>{status}</option>)}</select></label>
+        <label>Search job ID<input type="search" value={filters.query} onChange={(event) => changeFilters({ ...filters, query: event.target.value, page: 1 })} placeholder="e.g. #42" /></label>
+      </div>
+      <p className="muted job-count" aria-live="polite">{filteredJobs.length} matching jobs · newest first</p>
+      <div className="job-list">{visibleJobs.map((job) => {
+        const timing = jobTiming(job, now);
+        return <button key={job.id} className={job.id === selectedId ? "job-row active" : "job-row"} onClick={() => setSelectedId(job.id)}>
+          <span><strong>Job #{job.id}</strong><small>{formatDate(job.createdAt)}</small><small title="Total time across all attempts, including retry waits">Waiting {formatDuration(timing.waiting)} · Running {formatDuration(timing.running)}</small></span><StatusBadge status={job.status} />
+        </button>;
+      })}</div>
+      {!filteredJobs.length && <EmptyList title="No matching jobs" text="Try another status or job ID." />}
+      <nav className="pagination" aria-label="Job pages"><button className="secondary-button" disabled={page <= 1} onClick={() => changeFilters({ ...filters, page: page - 1 })}>Previous</button><span>Page {page} of {pages}</span><button className="secondary-button" disabled={page >= pages} onClick={() => changeFilters({ ...filters, page: page + 1 })}>Next</button></nav>
     </div>
     <div className="content-card job-detail-card">
       {error && <div className="inline-error">{error}</div>}
@@ -444,13 +510,16 @@ function JobsPanel({ token, projectId, inputs, configs, canContribute, canManage
   </>;
 }
 
-function JobSubmissionForm({ token, projectId, inputs, configs, onCreated }: {
+function JobSubmissionForm({ projects, onSelectProject, token, projectId, inputs, configs, onCreated }: {
   token: string; projectId: number; inputs: MolecularInput[]; configs: ExperimentConfig[];
   onCreated: (job: JobSummary) => void;
+  projects: Project[]; onSelectProject: (id: number) => void;
 }) {
   const [inputId, setInputId] = useState(String(inputs[0]?.id ?? ""));
   const [configId, setConfigId] = useState(String(configs[0]?.id ?? ""));
   const [busy, setBusy] = useState(false);
+  const [step, setStep] = useState<"choose" | "review">("choose");
+  const [key, setKey] = useState("");
   const [error, setError] = useState("");
   const pending = useRef<{ key: string; body: { projectId: number; molecularInputId: number; experimentConfigId: number } } | null>(null);
   const submitting = useRef(false);
@@ -460,6 +529,11 @@ function JobSubmissionForm({ token, projectId, inputs, configs, onCreated }: {
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (!ready || submitting.current) return;
+    if (step === "choose") {
+      const body = { projectId, molecularInputId: Number(inputId), experimentConfigId: Number(configId) };
+      if (!pending.current || JSON.stringify(pending.current.body) !== JSON.stringify(body)) pending.current = { key: crypto.randomUUID(), body };
+      setKey(pending.current.key); setStep("review"); return;
+    }
     const body = { projectId, molecularInputId: Number(inputId), experimentConfigId: Number(configId) };
     // Preserve the key after an uncertain network response so Retry returns the same job.
     if (!pending.current || JSON.stringify(pending.current.body) !== JSON.stringify(body)) pending.current = { key: crypto.randomUUID(), body };
@@ -468,18 +542,27 @@ function JobSubmissionForm({ token, projectId, inputs, configs, onCreated }: {
       const job = await apiRequest<Omit<JobSummary, "updatedAt">>("/api/jobs", {
         token, method: "POST", headers: { "Idempotency-Key": pending.current.key }, body,
       });
-      pending.current = null;
+      pending.current = null; setStep("choose"); setKey("");
       onCreated({ ...job, updatedAt: job.createdAt });
     } catch (requestError) { setError(messageFrom(requestError)); }
     finally { submitting.current = false; setBusy(false); }
   }
 
   return <section className="content-card job-submit-card">
-    <div className="card-heading"><div><span className="eyebrow">New calculation</span><h2>Run an experiment</h2></div></div>
+    <div className="card-heading"><div><span className="eyebrow">New calculation</span><h2>Run an experiment</h2></div><p>Step {step === "choose" ? "1 · Choose" : "2 · Review"}</p></div>
     {!inputs.length || !configs.length ? <p className="muted">Upload a molecular input in Inputs and create a configuration in Configurations to submit a job.</p> : <form className="job-submit-form" onSubmit={submit}>
+      {step === "choose" ? <>
+      <label>Project<select value={projectId} onChange={(event) => onSelectProject(Number(event.target.value))}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>
       <label>Molecular input<select value={inputId} onChange={(event) => { setInputId(event.target.value); setError(""); }} disabled={busy} required>{inputs.map((input) => <option key={input.id} value={input.id}>{input.originalFilename} · #{input.id}</option>)}</select></label>
       <label>Configuration version<select value={configId} onChange={(event) => { setConfigId(event.target.value); setError(""); }} disabled={busy} required>{configs.map((config) => <option key={config.id} value={config.id}>{config.name} · v{config.version} · {config.spec.method}/{config.spec.basis}</option>)}</select></label>
-      <button className="primary-button" disabled={busy || !ready}>{busy ? "Submitting…" : error ? "Retry submission" : "Submit job"}</button>
+      </> : <div className="submission-review">
+        <h3>Review calculation</h3>
+        <dl><div><dt>Project</dt><dd>{projects.find((project) => project.id === projectId)?.name}</dd></div><div><dt>Input</dt><dd>{inputs.find((input) => String(input.id) === inputId)?.originalFilename} · #{inputId}</dd></div><div><dt>Configuration</dt><dd>{selectedConfig?.name} · v{selectedConfig?.version}</dd></div></dl>
+        <label>Idempotency key<input readOnly value={key} /></label>
+        <p className="muted">Retries of this submission use this key to return the same job.</p>
+        <button type="button" className="secondary-button" disabled={busy} onClick={() => { setStep("choose"); setError(""); }}>Back to choices</button>
+      </div>}
+      <button className="primary-button" disabled={busy || !ready}>{step === "choose" ? "Review submission" : busy ? "Submitting…" : error ? "Retry submission" : "Submit job"}</button>
       {selectedConfig && <p className="muted job-submit-summary">{selectedConfig.spec.method}/{selectedConfig.spec.basis} · Charge {selectedConfig.spec.charge} · Spin {selectedConfig.spec.spin} · Timeout {selectedConfig.spec.timeoutSeconds}s</p>}
       {error && <div className="inline-error" role="alert">{error}</div>}
     </form>}

@@ -1,6 +1,7 @@
 package com.labflow.backend.job;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart;
 import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post;
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.header;
@@ -73,6 +74,48 @@ class JobSubmissionIntegrationTest {
         for (Path path : paths) {
             Files.deleteIfExists(path);
         }
+    }
+
+    @Test
+    void listReportsWaitingAndRunningTimeAcrossRetriesAndChecksProjectAccess() throws Exception {
+        String token = register("job-timing@example.com");
+        long projectId = createProject(token, "Timing");
+        long inputId = uploadInput(token, projectId);
+        long configId = createConfig(token, projectId, "Timing baseline");
+        String response = mockMvc.perform(post("/api/jobs")
+                        .header("Authorization", "Bearer " + token)
+                        .header("Idempotency-Key", "timing-job")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content(body(projectId, inputId, configId)))
+                .andExpect(status().isCreated()).andReturn().getResponse().getContentAsString();
+        long jobId = ((Number) JsonPath.read(response, "$.id")).longValue();
+        jdbcTemplate.update("UPDATE jobs SET created_at = CURRENT_TIMESTAMP - INTERVAL '100 seconds' WHERE id = ?", jobId);
+        String queued = mockMvc.perform(get("/api/projects/{id}/jobs", projectId)
+                        .header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].runningSeconds").value(0))
+                .andExpect(jsonPath("$[0].timingMeasuredAt").isNotEmpty())
+                .andReturn().getResponse().getContentAsString();
+        assertThat(((Number) JsonPath.read(queued, "$[0].waitingSeconds")).doubleValue()).isGreaterThanOrEqualTo(100);
+        long workerId = jdbcTemplate.queryForObject("""
+                INSERT INTO workers (instance_name, image_digest, capabilities)
+                VALUES ('timing-worker', 'test-image', '["pyscf.single_point"]'::jsonb) RETURNING id
+                """, Long.class);
+        jdbcTemplate.update("""
+                INSERT INTO job_attempts (job_id, attempt_no, attempt_token, worker_id, status,
+                                          lease_expires_at, started_at, finished_at)
+                VALUES (?, 1, ?::uuid, ?, 'LOST', '2026-01-01T00:00:40Z', '2026-01-01T00:00:20Z', '2026-01-01T00:00:40Z'),
+                       (?, 2, ?::uuid, ?, 'SUCCEEDED', '2026-01-01T00:01:20Z', '2026-01-01T00:01:00Z', '2026-01-01T00:01:20Z')
+                """, jobId, UUID.randomUUID().toString(), workerId, jobId, UUID.randomUUID().toString(), workerId);
+        jdbcTemplate.update("""
+                UPDATE jobs SET status = 'SUCCEEDED', created_at = '2026-01-01T00:00:00Z',
+                                updated_at = '2026-01-01T00:01:20Z' WHERE id = ?
+                """, jobId);
+        mockMvc.perform(get("/api/projects/{id}/jobs", projectId).header("Authorization", "Bearer " + token))
+                .andExpect(status().isOk()).andExpect(jsonPath("$[0].waitingSeconds").value(40))
+                .andExpect(jsonPath("$[0].runningSeconds").value(40));
+        String outsider = register("job-timing-outsider@example.com");
+        mockMvc.perform(get("/api/projects/{id}/jobs", projectId).header("Authorization", "Bearer " + outsider))
+                .andExpect(status().isForbidden());
     }
 
     @Test

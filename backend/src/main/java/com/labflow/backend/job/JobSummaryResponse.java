@@ -9,6 +9,9 @@ public record JobSummaryResponse(
         long experimentConfigId,
         JobState status,
         Instant createdAt,
-        Instant updatedAt
+        Instant updatedAt,
+        double waitingSeconds,
+        double runningSeconds,
+        Instant timingMeasuredAt
 ) {
 }

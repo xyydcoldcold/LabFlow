@@ -67,6 +67,7 @@ export type JobStatus = "QUEUED" | "RUNNING" | "SUCCEEDED" | "FAILED" | "CANCELL
 export interface JobSummary {
   id: number; projectId: number; molecularInputId: number; experimentConfigId: number;
   status: JobStatus; createdAt: string; updatedAt: string;
+  waitingSeconds?: number; runningSeconds?: number; timingMeasuredAt?: string;
 }
 
 export interface JobAttempt {
