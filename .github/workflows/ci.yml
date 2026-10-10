@@ -66,8 +66,40 @@ jobs:
       - name: Run TypeScript typecheck
         run: npm run typecheck
 
-      - name: Test resumable log streaming
+      - name: Test frontend behavior
         run: npm test
+
+  frontend-smoke:
+    name: Week 6 browser smoke tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          persist-credentials: false
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v6
+        with:
+          node-version: "24"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Install browser dependencies
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Run browser smoke tests
+        run: npm run test:ui
+      - name: Upload browser evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: week6-browser-smoke
+          path: frontend/test-results/
+          if-no-files-found: ignore
 
   worker-tests:
     name: Worker tests
@@ -131,7 +163,7 @@ jobs:
             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
   week4-e2e:
-    name: Week 4 scientific job acceptance
+    name: Scientific job acceptance
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs:
@@ -156,7 +188,7 @@ jobs:
           npx playwright install --with-deps chromium
       - name: Start the real stack
         run: docker compose up --build --wait --wait-timeout 180
-      - name: Run H2 acceptance test
+      - name: Run scientific workflow acceptance tests
         working-directory: frontend
         run: npm run test:e2e
       - name: Upload acceptance evidence

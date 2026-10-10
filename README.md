@@ -277,7 +277,26 @@ npx playwright install chromium
 npm run test:e2e
 ```
 
-For a manual run, upload [`examples/h2.xyz`](examples/h2.xyz), create an RHF/`sto-3g` configuration with charge 0 and spin 0, then select both in Jobs and click **Submit job**. The expected converged energy is approximately **−1.1167593074 Hartree**.
+For a manual run, upload [`examples/h2.xyz`](examples/h2.xyz), create an RHF/`sto-3g` configuration with charge 0 and spin 0, then select both in Jobs, click **Review submission**, and confirm with **Submit job**. The expected converged energy is approximately **−1.1167593074 Hartree**.
+
+## Frontend workflow and demo
+
+Use **Explore demo** on the sign-in page, or open `http://localhost:3000/?demo=1`. The demo runs in the browser with clearly labeled fictional, read-only data. It needs no API, does not submit calculations, and leaves any existing login token unchanged. Inspect Job #1 to see a lost attempt followed by a takeover; select Jobs #1 and #2 to compare their configurations and sample results. Exit demo to return to the real workspace.
+
+In a real workspace, the two-step wizard displays the project, input, immutable configuration version, and idempotency key before submission. Retries after a lost response reuse that key. The job list preserves status, job-ID search, and page in the URL; details show recorded transitions, attempts, Workers, logs, execution environment, and the accepted result. Authorized contributors can request cancellation; running jobs remain running until the worker acknowledges the request. Select 2–5 successful jobs to compare saved method, basis, input hash, energy, wall time, and image metadata.
+
+Run the browser smoke tests without Docker or a backend:
+
+```bash
+npm --prefix frontend ci
+cd frontend
+npx playwright install chromium
+npm run test:ui
+```
+
+The smoke suite covers the demo, failed-load recovery, keyboard dialog navigation, SSE cursor resume and duplicate suppression, submission retries, filtering/pagination, cancellation UI, and result comparison. CI runs this suite separately from `npm run test:e2e`, which needs the real Compose stack. Frontend builds and unit tests run independently.
+
+Filtering and pagination currently operate on all downloaded project job summaries. The recorded image field can contain a local image tag; an immutable digest is shown only when supplied by the deployment. Demo data is illustrative and is not test or benchmark evidence.
 
 ## Technology stack
 

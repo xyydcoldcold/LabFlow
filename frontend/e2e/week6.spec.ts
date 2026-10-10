@@ -83,6 +83,8 @@ test("status, search and pagination survive reload and browser Back", async ({ p
   await expect(page.getByLabel("Search job ID")).toHaveValue("#24");
   await page.getByLabel("Search job ID").fill("999");
   await expect(page.getByText("No matching jobs", { exact: true })).toBeVisible();
+  await expect(page.getByText("Select a job", { exact: true })).toBeVisible();
+  await expect(page.locator(".job-detail-card .skeleton-card")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Next", exact: true })).toBeDisabled();
 });
 

@@ -19,6 +19,7 @@ import {
 import { streamJobLogs } from "./job-stream";
 import { filterJobs, formatDuration, jobStatuses, jobTiming, PAGE_SIZE, readJobFilters, type JobFilters } from "./job-list";
 import { JobHistory, JobComparison } from "./JobPresentation";
+import { demoUser, demoProject, isDemoMode } from "./demo";
 import "./styles.css";
 
 type WorkspaceTab = "jobs" | "inputs" | "configs" | "members";
@@ -32,11 +33,24 @@ function messageFrom(error: unknown): string {
 }
 
 export function App() {
+  return isDemoMode() ? <DemoApp /> : <AuthenticatedApp />;
+}
+
+function DemoApp() {
+  const leave = () => window.location.assign(window.location.pathname);
+  return <div className="demo-shell"><aside className="demo-banner" aria-label="Demo mode"><strong>Demo mode</strong><span>Fictional sample data · read-only · no calculations are submitted.</span><a href={window.location.pathname}>Exit demo</a></aside>
+    <Dashboard token="demo" user={demoUser} projects={[demoProject]} selectedProject={demoProject} onSelectProject={() => {}} onProjectsChanged={async () => {}} onSignOut={leave} />
+  </div>;
+}
+
+function AuthenticatedApp() {
   const [token, setToken] = useState<string | null>(() => localStorage.getItem(TOKEN_KEY));
   const [user, setUser] = useState<AuthUser | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState<number | null>(null);
   const [booting, setBooting] = useState(token !== null);
+  const [sessionError, setSessionError] = useState("");
+  const [sessionRetry, setSessionRetry] = useState(0);
 
   const signOut = useCallback(() => {
     localStorage.removeItem(TOKEN_KEY);
@@ -44,6 +58,7 @@ export function App() {
     setUser(null);
     setProjects([]);
     setSelectedProjectId(null);
+    setSessionError("");
   }, []);
 
   const loadProjects = useCallback(async (activeToken: string, preferredId?: number) => {
@@ -63,6 +78,7 @@ export function App() {
       return;
     }
     let cancelled = false;
+    setBooting(true); setSessionError("");
     Promise.all([
       apiRequest<AuthUser>("/api/auth/me", { token }),
       apiRequest<Project[]>("/api/projects", { token }),
@@ -74,8 +90,10 @@ export function App() {
         const requested = Number(new URLSearchParams(window.location.search).get("project"));
         setSelectedProjectId(visibleProjects.find((project) => project.id === requested)?.id ?? visibleProjects[0]?.id ?? null);
       })
-      .catch(() => {
-        if (!cancelled) signOut();
+      .catch((error: unknown) => {
+        if (cancelled) return;
+        if (error instanceof ApiError && error.status === 401) signOut();
+        else setSessionError(messageFrom(error));
       })
       .finally(() => {
         if (!cancelled) setBooting(false);
@@ -83,7 +101,7 @@ export function App() {
     return () => {
       cancelled = true;
     };
-  }, [signOut, token, user]);
+  }, [sessionRetry, signOut, token, user]);
 
   useEffect(() => {
     const restoreProject = () => {
@@ -106,10 +124,11 @@ export function App() {
     localStorage.setItem(TOKEN_KEY, response.accessToken);
     setToken(response.accessToken);
     setUser(response.user);
-    void loadProjects(response.accessToken);
+    void loadProjects(response.accessToken).catch((error: unknown) => setSessionError(messageFrom(error)));
   }
 
   if (booting) return <LoadingScreen />;
+  if (sessionError) return <main className="loading-screen session-error"><Brand /><h1>Workspace unavailable</h1><p role="alert">{sessionError}</p><div className="button-row"><button className="primary-button" onClick={() => { setUser(null); setSessionRetry((value) => value + 1); }}>Retry session</button><button className="secondary-button" onClick={signOut}>Sign out</button></div><a href="?demo=1">Explore demo</a></main>;
   if (!token || !user) return <AuthScreen onAuthenticated={establishSession} />;
 
   const selectedProject = projects.find((project) => project.id === selectedProjectId) ?? null;
@@ -127,7 +146,7 @@ export function App() {
 }
 
 function LoadingScreen() {
-  return <main className="loading-screen"><Brand /><div className="spinner" aria-label="Loading LabFlow" /></main>;
+  return <main className="loading-screen"><Brand /><div className="spinner" role="status" aria-label="Loading LabFlow" /></main>;
 }
 
 function Brand() {
@@ -194,6 +213,7 @@ function AuthScreen({ onAuthenticated }: { onAuthenticated: (response: AuthRespo
             {error && <div className="inline-error" role="alert">{error}</div>}
             <button className="primary-button wide" disabled={submitting}>{submitting ? "Please wait…" : mode === "login" ? "Sign in" : "Create account"}</button>
           </form>
+          <p className="demo-entry"><a href="?demo=1">Explore demo</a> · Preview a workspace without an account.</p>
           <p className="auth-switch">{mode === "login" ? "New to LabFlow?" : "Already have an account?"} <button className="text-button" onClick={() => { setMode(mode === "login" ? "register" : "login"); setError(""); }}>{mode === "login" ? "Create an account" : "Sign in"}</button></p>
         </div>
       </section>
@@ -214,6 +234,12 @@ interface DashboardProps {
 function Dashboard(props: DashboardProps) {
   const { token, user, projects, selectedProject, onSelectProject, onProjectsChanged, onSignOut } = props;
   const [showCreateProject, setShowCreateProject] = useState(false);
+  const projectTrigger = useRef<HTMLButtonElement>(null);
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (wasOpen.current && !showCreateProject) projectTrigger.current?.focus();
+    wasOpen.current = showCreateProject;
+  }, [showCreateProject]);
   const [projectName, setProjectName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
@@ -238,10 +264,10 @@ function Dashboard(props: DashboardProps) {
     <main className="app-shell">
       <aside className="sidebar">
         <Brand />
-        <div className="sidebar-section-title"><span>Projects</span><button className="icon-button" aria-label="Create project" onClick={() => setShowCreateProject(true)}>+</button></div>
+        <div className="sidebar-section-title"><span>Projects</span><button ref={projectTrigger} className="icon-button" aria-label="Create project" disabled={isDemoMode()} onClick={() => setShowCreateProject(true)}>+</button></div>
         <nav className="project-nav" aria-label="Projects">
           {projects.map((project) => (
-            <button key={project.id} className={project.id === selectedProject?.id ? "project-link active" : "project-link"} onClick={() => onSelectProject(project.id)}>
+            <button key={project.id} aria-current={project.id === selectedProject?.id ? "page" : undefined} className={project.id === selectedProject?.id ? "project-link active" : "project-link"} onClick={() => onSelectProject(project.id)}>
               <span className="project-monogram">{project.name.slice(0, 2).toUpperCase()}</span>
               <span><strong>{project.name}</strong><small>{project.currentUserRole.toLowerCase()}</small></span>
             </button>
@@ -256,12 +282,21 @@ function Dashboard(props: DashboardProps) {
       </aside>
 
       <section className="main-stage">
+        {projects.length > 1 && <label className="mobile-project-picker">Active project<select value={selectedProject?.id ?? ""} onChange={(event) => onSelectProject(Number(event.target.value))}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>}
         {selectedProject ? <ProjectWorkspace key={selectedProject.id} token={token} project={selectedProject} projects={projects} onSelectProject={onSelectProject} /> : <WelcomeEmpty onCreate={() => setShowCreateProject(true)} />}
       </section>
 
       {showCreateProject && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setShowCreateProject(false)}>
-          <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="new-project-title" onMouseDown={(event) => event.stopPropagation()}>
+          <section className="modal-card" role="dialog" aria-modal="true" aria-labelledby="new-project-title" onMouseDown={(event) => event.stopPropagation()} onKeyDown={(event) => {
+            if (event.key === "Escape" && !creating) { setShowCreateProject(false); return; }
+            if (event.key === "Tab") {
+              const controls = [...event.currentTarget.querySelectorAll<HTMLElement>('button:not(:disabled), input:not(:disabled), select:not(:disabled), a[href]')];
+              const first = controls[0], last = controls.at(-1);
+              if (event.shiftKey && document.activeElement === first && last) { event.preventDefault(); last.focus(); }
+              else if (!event.shiftKey && document.activeElement === last && first) { event.preventDefault(); first.focus(); }
+            }
+          }}>
             <button className="modal-close" onClick={() => setShowCreateProject(false)} aria-label="Close">×</button>
             <span className="eyebrow">New workspace</span>
             <h2 id="new-project-title">Create a project</h2>
@@ -299,6 +334,8 @@ function ProjectWorkspace({ token, project, projects, onSelectProject }: { token
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const [listError, setListError] = useState("");
+  const [listRetry, setListRetry] = useState(0);
   const refresh = useCallback(() => setRefreshKey((key) => key + 1), []);
   const updateJob = useCallback((updated: JobDetails) => {
     setJobs((current) => current.map((job) => job.id === updated.id
@@ -334,13 +371,13 @@ function ProjectWorkspace({ token, project, projects, onSelectProject }: { token
     async function poll() {
       try {
         const current = await apiRequest<JobSummary[]>(`/api/projects/${project.id}/jobs`, { token });
-        if (!cancelled) setJobs(current);
-      } catch { /* Workspace retry and job detail errors remain available. */ }
+        if (!cancelled) { setJobs(current); setListError(""); }
+      } catch (error: unknown) { if (!cancelled) setListError(messageFrom(error)); }
       finally { if (!cancelled) timer = window.setTimeout(poll, 5_000); }
     }
-    timer = window.setTimeout(poll, 5_000);
+    timer = window.setTimeout(poll, listRetry ? 0 : 5_000);
     return () => { cancelled = true; window.clearTimeout(timer); };
-  }, [project.id, token]);
+  }, [listRetry, project.id, token]);
 
   const canContribute = project.currentUserRole !== "VIEWER";
   const canManageMembers = project.currentUserRole === "OWNER";
@@ -365,7 +402,8 @@ function ProjectWorkspace({ token, project, projects, onSelectProject }: { token
         <TabButton name="members" current={tab} onSelect={setTab}>Members <span>{members.length + 1}</span></TabButton>
       </nav>
       {error && <div className="page-error" role="alert"><strong>Workspace could not be loaded.</strong><span>{error}</span><button onClick={refresh}>Retry</button></div>}
-      {loading ? <ContentSkeleton /> : (
+      {listError && <div className="page-error" role="status"><strong>Job list could not refresh.</strong><span>{listError}</span><button onClick={() => setListRetry((value) => value + 1)}>Retry job list</button></div>}
+      {loading ? <ContentSkeleton /> : error ? null : (
         <>
           {tab === "jobs" && <JobsPanel projects={projects} onSelectProject={onSelectProject} token={token} canManage={project.currentUserRole === "OWNER" || project.currentUserRole === "MAINTAINER"} projectId={project.id} inputs={inputs} configs={configs} canContribute={canContribute} jobs={jobs} onJobUpdated={updateJob} onJobCreated={(job) => setJobs((current) => [job, ...current.filter((item) => item.id !== job.id)])} />}
           {tab === "inputs" && <InputsPanel token={token} projectId={project.id} inputs={inputs} canContribute={canContribute} onChanged={refresh} />}
@@ -425,7 +463,9 @@ function JobsPanel({ projects, onSelectProject, token, projectId, inputs, config
     finally { cancelInFlight.current = false; setCancellingId(null); }
   }
 
-  const [selectedId, setSelectedId] = useState<number | null>(jobs[0]?.id ?? null);
+  const [selectedId, setSelectedId] = useState<number | null>(() =>
+    visibleJobs.some((job) => job.id === jobs[0]?.id) ? jobs[0]!.id : visibleJobs[0]?.id ?? null);
+  const visibleIds = visibleJobs.map((job) => job.id).join(",");
   const [details, setDetails] = useState<JobDetails | null>(null);
   const [error, setError] = useState("");
   const [streamState, setStreamState] = useState("Connecting live logs…");
@@ -449,12 +489,14 @@ function JobsPanel({ projects, onSelectProject, token, projectId, inputs, config
 
 
   useEffect(() => {
-    if (jobs.length === 0) { setSelectedId(null); setDetails(null); return; }
-    if (!jobs.some((job) => job.id === selectedId)) setSelectedId(jobs[0]!.id);
-  }, [jobs, selectedId]);
+    const ids = visibleIds ? visibleIds.split(",").map(Number) : [];
+    setSelectedId((current) => current !== null && ids.includes(current) ? current : ids[0] ?? null);
+  }, [visibleIds]);
 
   useEffect(() => {
-    if (selectedId === null) return;
+    if (selectedId === null) { setDetails(null); setError(""); return; }
+    setError("");
+    setDetails((current) => current?.id === selectedId ? current : null);
     let cancelled = false;
     let timer: number | undefined;
     const controller = new AbortController();
@@ -481,7 +523,7 @@ function JobsPanel({ projects, onSelectProject, token, projectId, inputs, config
           timer = window.setTimeout(load, 2_000);
         } else { controller.abort(); setStreamState("Saved logs"); }
       } catch (requestError) {
-        if (!cancelled) { setError(messageFrom(requestError)); timer = window.setTimeout(load, 2_000); }
+        if (!cancelled) { setError(messageFrom(requestError)); if (!(requestError instanceof ApiError && [401, 403, 404].includes(requestError.status))) timer = window.setTimeout(load, 2_000); }
       }
     };
     void load();
@@ -490,6 +532,7 @@ function JobsPanel({ projects, onSelectProject, token, projectId, inputs, config
 
   const summary = details?.result?.summary;
   const latestAttempt = details?.attempts.at(-1);
+  const acceptedAttempt = details?.attempts.find((attempt) => attempt.id === details.result?.attemptId);
   return <>
     {canContribute ? <JobSubmissionForm projects={projects} onSelectProject={onSelectProject} token={token} projectId={projectId} inputs={inputs} configs={configs} onCreated={(job) => { onJobCreated(job); changeFilters({ status: "ALL", query: "", page: 1 }); setSelectedId(job.id); }} /> : <ReadOnlyNote text="Your viewer role can inspect jobs and results. A project contributor can submit calculations." />}
     {jobs.length > 0 && <section className="comparison-toolbar" aria-label="Select experiments to compare"><span>Select 2–5 successful jobs · {comparisonIds.length} selected</span><button className="primary-button" disabled={comparisonIds.length < 2} onClick={() => setShowComparison(true)}>Compare selected jobs</button><button className="secondary-button" disabled={!comparisonIds.length} onClick={() => { setComparisonIds([]); setShowComparison(false); }}>Clear selection</button></section>}
@@ -512,22 +555,22 @@ function JobsPanel({ projects, onSelectProject, token, projectId, inputs, config
       <nav className="pagination" aria-label="Job pages"><button className="secondary-button" disabled={page <= 1} onClick={() => changeFilters({ ...filters, page: page - 1 })}>Previous</button><span>Page {page} of {pages}</span><button className="secondary-button" disabled={page >= pages} onClick={() => changeFilters({ ...filters, page: page + 1 })}>Next</button></nav>
     </div>
     <div className="content-card job-detail-card">
-      {error && <div className="inline-error">{error}</div>}
-      {!details || details.id !== selectedId ? <ContentSkeleton /> : <>
+      {error && <div className="inline-error" role="alert">{error} <button className="text-button" onClick={() => setDetailRefresh((value) => value + 1)}>Retry job details</button></div>}
+      {selectedId === null ? <EmptyList title="Select a job" text="Change your filters to find jobs to inspect." /> : !details || details.id !== selectedId ? error ? <p className="muted">Job details are unavailable.</p> : <ContentSkeleton /> : <>
         <div className="job-detail-heading"><div><span className="eyebrow">Job #{details.id}</span><h2>{details.specSnapshot.experimentConfig?.name ?? "Calculation"}</h2><p>{details.specSnapshot.molecularInput?.originalFilename ?? `Input #${details.molecularInputId}`}</p></div><StatusBadge status={details.status} /></div>
         <dl className="job-facts"><div><dt>Attempt</dt><dd>{latestAttempt?.attemptNo ?? "Waiting"}</dd></div><div><dt>Worker</dt><dd>{latestAttempt?.workerInstance ?? "Unassigned"}</dd></div><div><dt>Method</dt><dd>{details.specSnapshot.experimentConfig?.spec?.method ?? "—"}</dd></div><div><dt>Basis</dt><dd>{details.specSnapshot.experimentConfig?.spec?.basis ?? "—"}</dd></div></dl>
         {summary && <div className="result-panel"><span className="eyebrow">Result</span><div className="result-grid">
           {summary.energyHartree !== undefined && <div><small>Energy</small><strong>{Number(summary.energyHartree).toFixed(10)} Eh</strong></div>}
           {summary.converged !== undefined && <div><small>Converged</small><strong>{summary.converged ? "Yes" : "No"}</strong></div>}
           {summary.durationSeconds !== undefined && <div><small>Runtime</small><strong>{Number(summary.durationSeconds).toFixed(2)}s</strong></div>}
-        </div></div>}
+        </div><p className="result-provenance">One saved result for this job · {acceptedAttempt ? `Attempt ${acceptedAttempt.attemptNo} on ${acceptedAttempt.workerInstance}` : `Attempt #${details.result!.attemptId}`}.</p></div>}
         {details.status === "FAILED" && canManage && <button className="secondary-button" disabled={replaying} onClick={() => void replay()}>{replaying ? "Creating replay…" : "Replay as a new job"}</button>}
         {details.canCancel && !details.cancelRequestedAt && <button className="secondary-button" disabled={cancellingId !== null} onClick={() => void cancelJob(details)}>{cancellingId === details.id ? "Requesting cancellation…" : "Cancel job"}</button>}
         {cancelError?.id === details.id && <div className="inline-error" role="alert">{cancelError.message}</div>}
         <JobHistory job={details} />
         {latestAttempt?.failure && <div className="inline-error"><strong>{String(latestAttempt.failure.code ?? "Task failed")}</strong><br />{String(latestAttempt.failure.message ?? "The worker reported a failure.")}</div>}
         <div className="log-heading"><span className="eyebrow">Worker log</span><small aria-live="polite">{streamState} · {details.logs.length} chunks</small></div>
-        <pre className="job-log">{details.logs.length ? details.logs.map((log) => `[${log.stream}] ${log.content}`).join("") : "Waiting for worker output…"}</pre>
+        <pre className="job-log" tabIndex={0} aria-label="Worker log">{details.logs.length ? details.logs.map((log) => `[${log.stream}] ${log.content}`).join("") : "Waiting for worker output…"}</pre>
         {details.result && <details className="manifest"><summary>Reproducibility manifest</summary><pre>{JSON.stringify(details.result.manifest, null, 2)}</pre></details>}
       </>}
     </div>
@@ -603,11 +646,11 @@ function Metric({ value, label }: { value: number; label: string }) {
 }
 
 function TabButton({ name, current, onSelect, children }: { name: WorkspaceTab; current: WorkspaceTab; onSelect: (tab: WorkspaceTab) => void; children: React.ReactNode }) {
-  return <button className={name === current ? "active" : ""} onClick={() => onSelect(name)}>{children}</button>;
+  return <button aria-pressed={name === current} className={name === current ? "active" : ""} onClick={() => onSelect(name)}>{children}</button>;
 }
 
 function ContentSkeleton() {
-  return <div className="content-card skeleton-card"><i /><i /><i /></div>;
+  return <div className="content-card skeleton-card" role="status" aria-label="Loading workspace"><i /><i /><i /></div>;
 }
 
 function InputsPanel({ token, projectId, inputs, canContribute, onChanged }: { token: string; projectId: number; inputs: MolecularInput[]; canContribute: boolean; onChanged: () => void }) {
@@ -652,7 +695,7 @@ function InputsPanel({ token, projectId, inputs, canContribute, onChanged }: { t
         <span className="eyebrow">Add input</span><h3>Upload molecule</h3>
         {canContribute ? (
           <form onSubmit={upload} className="stack-form compact-form">
-            <label className="drop-zone"><input type="file" accept=".xyz" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /><span className="upload-arrow">↑</span><strong>{file?.name ?? "Choose an XYZ file"}</strong><small>{file ? formatBytes(file.size) : "Maximum 1 MB · validated before storage"}</small></label>
+            <label className="drop-zone"><input aria-label="Molecular input file" type="file" accept=".xyz" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /><span className="upload-arrow">↑</span><strong>{file?.name ?? "Choose an XYZ file"}</strong><small>{file ? formatBytes(file.size) : "Maximum 1 MB · validated before storage"}</small></label>
             {feedback && <div className={`form-feedback ${feedback.kind}`}>{feedback.text}</div>}
             <button className="primary-button wide" disabled={!file || busy}>{busy ? "Validating…" : "Upload input"}</button>
           </form>

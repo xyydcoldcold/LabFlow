@@ -1,3 +1,4 @@
+import { demoResponse, isDemoMode } from "./demo";
 export type ProjectRole = "OWNER" | "MAINTAINER" | "MEMBER" | "VIEWER";
 export type MembershipRole = Exclude<ProjectRole, "OWNER">;
 
@@ -122,6 +123,9 @@ interface RequestOptions extends Omit<RequestInit, "body"> {
 }
 
 export async function apiRequest<T>(path: string, options: RequestOptions = {}): Promise<T> {
+  if (isDemoMode()) {
+    return demoResponse(path, options.method ?? "GET") as T;
+  }
   const headers = new Headers(options.headers);
   if (options.token) {
     headers.set("Authorization", `Bearer ${options.token}`);
