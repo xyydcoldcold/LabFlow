@@ -92,6 +92,27 @@ class MolecularInputValidatorTest {
                 .hasMessage("Molecular input must be valid UTF-8 text");
     }
 
+    @ParameterizedTest
+    @ValueSource(strings = {"NaN", "Infinity", "-Infinity", "1e309"})
+    void rejectsNonFiniteCoordinates(String coordinate) {
+        assertThatThrownBy(() -> validator.validate("input.xyz",
+                ("1\ncomment\nH " + coordinate + " 0 0\n").getBytes(StandardCharsets.UTF_8)))
+                .isInstanceOf(InvalidMolecularInputException.class).hasMessageContaining("invalid coordinate");
+    }
+
+    @Test
+    void acceptsExactlyTheUploadLimitButRejectsOneMoreByte() {
+        String prefix = "1\n";
+        String suffix = "\nH 0 0 0\n";
+        byte[] exact = (prefix + "x".repeat(128 - prefix.length() - suffix.length()) + suffix)
+                .getBytes(StandardCharsets.UTF_8);
+        assertThat(validator.validate("input.xyz", exact).sizeBytes()).isEqualTo(128);
+        byte[] oversized = java.util.Arrays.copyOf(exact, 129);
+        oversized[128] = '\n';
+        assertThatThrownBy(() -> validator.validate("input.xyz", oversized))
+                .isInstanceOf(MolecularInputTooLargeException.class);
+    }
+
     private byte[] validXyz() {
         return "2\nHydrogen molecule\nH 0 0 0\nH 0 0 0.74\n".getBytes(StandardCharsets.UTF_8);
     }

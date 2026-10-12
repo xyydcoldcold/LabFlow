@@ -1,6 +1,9 @@
 package com.labflow.backend.experimentconfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -14,6 +17,7 @@ import com.labflow.backend.auth.AppUserRepository;
 import com.labflow.backend.project.Project;
 import com.labflow.backend.project.ProjectPermissionService;
 import com.labflow.backend.project.ProjectRepository;
+import com.labflow.backend.project.ProjectAccessDeniedException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -70,6 +74,21 @@ class ExperimentConfigServiceTest {
         assertThat(created.getCreatedAt()).isEqualTo(NOW);
         verify(permissionService).requireContribute(PROJECT_ID, USER_ID);
         verify(projectRepository).findByIdForUpdate(PROJECT_ID);
+    }
+
+    @Test
+    void deniedContributionCannotReadOrWriteConfigVersions() {
+        doThrow(new ProjectAccessDeniedException(PROJECT_ID)).when(permissionService).requireContribute(PROJECT_ID, USER_ID);
+        assertThatThrownBy(() -> service.createVersion(PROJECT_ID, USER_ID, "Baseline", validSpec()))
+                .isInstanceOf(ProjectAccessDeniedException.class);
+        verifyNoInteractions(configRepository, projectRepository, userRepository);
+    }
+
+    @Test
+    void invalidSpecCannotAllocateOrSaveAVersion() {
+        assertThatThrownBy(() -> service.createVersion(PROJECT_ID, USER_ID, "Baseline", validSpec().put("timeoutSeconds", 0)))
+                .isInstanceOf(InvalidExperimentConfigException.class);
+        verifyNoInteractions(configRepository, projectRepository, userRepository);
     }
 
     @Test

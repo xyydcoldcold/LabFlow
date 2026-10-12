@@ -279,6 +279,14 @@ npm run test:e2e
 
 For a manual run, upload [`examples/h2.xyz`](examples/h2.xyz), create an RHF/`sto-3g` configuration with charge 0 and spin 0, then select both in Jobs, click **Review submission**, and confirm with **Submit job**. The expected converged energy is approximately **−1.1167593074 Hartree**.
 
+## Automated test coverage
+
+See [the test matrix and verification commands](docs/TESTING.md) for service,
+state-machine, validator, repository, security, Outbox, AMQP, and real HTTP SSE
+coverage. Backend integration tests require Docker and use disposable
+Testcontainers databases/brokers. CI preserves the backend JUnit XML and HTML
+reports on both passing and failing runs.
+
 ## Frontend workflow and demo
 
 Use **Explore demo** on the sign-in page, or open `http://localhost:3000/?demo=1`. The demo runs in the browser with clearly labeled fictional, read-only data. It needs no API, does not submit calculations, and leaves any existing login token unchanged. Inspect Job #1 to see a lost attempt followed by a takeover; select Jobs #1 and #2 to compare their configurations and sample results. Exit demo to return to the real workspace.

@@ -5,6 +5,8 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.doAnswer;
 import static org.mockito.Mockito.doThrow;
 import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.verify;
 
 import java.sql.Timestamp;
 import java.time.Instant;
@@ -20,6 +22,8 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.testcontainers.service.connection.ServiceConnection;
 import org.springframework.jdbc.core.JdbcTemplate;
+import org.springframework.transaction.PlatformTransactionManager;
+import org.springframework.transaction.support.TransactionTemplate;
 import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
@@ -38,6 +42,7 @@ class OutboxBatchServiceIntegrationTest {
 
     @Autowired private JdbcTemplate jdbcTemplate;
     @Autowired private OutboxBatchService batchService;
+    @Autowired private PlatformTransactionManager transactions;
 
     @MockitoBean
     private JobEventPublisher eventPublisher;
@@ -100,6 +105,19 @@ class OutboxBatchServiceIntegrationTest {
             release.countDown();
             assertThat(first.get(10, TimeUnit.SECONDS)).isEqualTo(new OutboxBatchResult(1, 1, 0));
         }
+    }
+
+    @Test
+    void rollbackAfterBrokerConfirmLeavesTheEventEligibleForAtLeastOnceRedelivery() {
+        long eventId = insertEvent(505L);
+        new TransactionTemplate(transactions).executeWithoutResult(status -> {
+            assertThat(batchService.publishBatch()).isEqualTo(new OutboxBatchResult(1, 1, 0));
+            status.setRollbackOnly();
+        });
+        assertThat(jdbcTemplate.queryForObject(
+                "SELECT published_at IS NULL FROM outbox_events WHERE id = ?", Boolean.class, eventId)).isTrue();
+        assertThat(batchService.publishBatch()).isEqualTo(new OutboxBatchResult(1, 1, 0));
+        verify(eventPublisher, times(2)).publish(any());
     }
 
     @Test

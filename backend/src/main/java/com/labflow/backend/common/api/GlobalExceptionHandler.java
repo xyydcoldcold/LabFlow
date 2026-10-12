@@ -28,6 +28,7 @@ import com.labflow.backend.worker.AttemptCancellationRequestedException;
 import com.labflow.backend.job.JobNotCancellableException;
 import com.labflow.backend.worker.WorkerNotFoundException;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.security.access.AccessDeniedException;
@@ -37,6 +38,7 @@ import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.multipart.support.MissingServletRequestPartException;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
@@ -239,6 +241,7 @@ public class GlobalExceptionHandler {
             MethodArgumentNotValidException.class,
             MissingRequestHeaderException.class,
             HttpMessageNotReadableException.class,
+            MethodArgumentTypeMismatchException.class,
             IllegalArgumentException.class
     })
     ResponseEntity<ApiErrorResponse> handleBadRequest(Exception exception, HttpServletRequest request) {
@@ -259,6 +262,7 @@ public class GlobalExceptionHandler {
                 request.getRequestURI(),
                 request.getHeader("X-Request-ID")
         );
-        return ResponseEntity.status(status).body(response);
+        // SSE clients request text/event-stream, but pre-stream failures use the JSON error contract.
+        return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON).body(response);
     }
 }
