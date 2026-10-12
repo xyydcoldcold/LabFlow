@@ -287,6 +287,14 @@ coverage. Backend integration tests require Docker and use disposable
 Testcontainers databases/brokers. CI preserves the backend JUnit XML and HTML
 reports on both passing and failing runs.
 
+## Metrics and operational logs
+
+The backend exports authenticated Prometheus metrics and JSON logs with request
+and job/attempt/worker correlation. An optional Compose `observability` profile
+adds Prometheus and a provisioned Grafana dashboard. See [setup, metric semantics,
+and isolated Compose acceptance](docs/OBSERVABILITY.md). The production profile
+keeps the scrape endpoint unexposed by default.
+
 ## Frontend workflow and demo
 
 Use **Explore demo** on the sign-in page, or open `http://localhost:3000/?demo=1`. The demo runs in the browser with clearly labeled fictional, read-only data. It needs no API, does not submit calculations, and leaves any existing login token unchanged. Inspect Job #1 to see a lost attempt followed by a takeover; select Jobs #1 and #2 to compare their configurations and sample results. Exit demo to return to the real workspace.

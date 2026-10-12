@@ -173,7 +173,7 @@ jobs:
             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 
   week4-e2e:
-    name: Scientific job acceptance
+    name: Scientific and reliability acceptance
     runs-on: ubuntu-latest
     timeout-minutes: 20
     needs:
@@ -196,18 +196,20 @@ jobs:
         run: |
           npm ci
           npx playwright install --with-deps chromium
-      - name: Start the real stack
-        run: docker compose up --build --wait --wait-timeout 180
-      - name: Run scientific workflow acceptance tests
-        working-directory: frontend
-        run: npm run test:e2e
+      - name: Run isolated scientific and reliability acceptance
+        run: python3 scripts/week7_acceptance.py
       - name: Upload acceptance evidence
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: week4-acceptance
-          path: frontend/test-results/
+          name: scientific-reliability-acceptance
+          path: |
+            frontend/test-results/week7/
+            test-results/week7/
           if-no-files-found: ignore
       - name: Stop the test stack
         if: always()
-        run: docker compose down
+        run: >-
+          docker compose --env-file /dev/null --project-directory "$PWD"
+          -p labflow-w7-acceptance -f tests/e2e/compose.yml
+          -f docker-compose.observability.yml --profile observability down

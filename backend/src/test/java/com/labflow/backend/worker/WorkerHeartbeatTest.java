@@ -40,7 +40,8 @@ class WorkerHeartbeatTest {
             new WorkerProperties("test-service-token-at-least-32-bytes", Duration.ofSeconds(30)),
             mock(ArtifactStorageProperties.class), mock(JobStateMachine.class),
             mock(JobLogStreamService.class), Clock.fixed(NOW, ZoneOffset.UTC),
-            new JobDispatchService(jdbc, Clock.fixed(NOW, ZoneOffset.UTC)));
+            new JobDispatchService(jdbc, Clock.fixed(NOW, ZoneOffset.UTC)),
+            mock(com.labflow.backend.observability.JobTelemetry.class));
 
     @BeforeEach
     void activeAttempt() throws Exception {

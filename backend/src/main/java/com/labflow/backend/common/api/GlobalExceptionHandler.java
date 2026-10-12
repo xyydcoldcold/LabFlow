@@ -260,7 +260,7 @@ public class GlobalExceptionHandler {
                 code,
                 message,
                 request.getRequestURI(),
-                request.getHeader("X-Request-ID")
+                (request.getAttribute("requestId") != null ? request.getAttribute("requestId").toString() : request.getHeader("X-Request-ID"))
         );
         // SSE clients request text/event-stream, but pre-stream failures use the JSON error contract.
         return ResponseEntity.status(status).contentType(MediaType.APPLICATION_JSON).body(response);

@@ -64,8 +64,23 @@ a claim that every failure mode is covered. The 60/300-second retry queues have
 routing coverage; only the 15-second tier is waited through in the backend suite.
 Browser fixtures and the fictional demo are not scientific acceptance evidence.
 
-Week 7 Day 2 covers the Compose E2E matrix, including live browser-to-worker
-cancellation. Metrics and structured logs, k6 loads, three-run median/p95
-benchmarks, and database/broker/worker fault-injection evidence belong to later
-Week 7 days. The earlier twenty-run crash acceptance does not establish a new
-benchmark or performance under default leases/cloud hardware.
+## Isolated Compose E2E and observability
+
+Run `python3 scripts/week7_acceptance.py` from the repository root after installing
+frontend dependencies and Playwright Chromium. The isolated suite covers real
+PySCF submit/result, same-key response-loss retry, viewer permissions, comparison,
+running browser-to-worker cancellation, real browser SSE reconnect, exhausted
+transient-failure DLQ routing, safe browser replay, authenticated Prometheus
+scraping and provisioned Grafana. It is separate from backend-free UI fixtures.
+
+`ObservabilityIntegrationTest` verifies committed-only counters, rollback and
+duplicate-completion behavior, SQL-backed gauges, bounded labels and dedicated
+metrics authorization. `RequestCorrelationFilterTest` checks safe ID propagation,
+untrusted-header replacement and MDC cleanup. Worker tests verify stable request
+IDs across transport retries and correlated JSON lifecycle output.
+
+See [observability setup and acceptance semantics](OBSERVABILITY.md) for commands,
+credentials, reports and the test-only one-attempt DLQ injection. Metrics/logging
+are implemented; k6 loads, three-run median/p95 benchmarks, and dependency/worker
+fault-injection benchmark evidence remain for Days 4–5. The earlier twenty-run
+crash acceptance does not establish a new benchmark or cloud/default-lease results.

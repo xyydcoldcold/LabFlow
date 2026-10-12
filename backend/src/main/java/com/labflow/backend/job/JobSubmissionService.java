@@ -5,6 +5,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 
+import com.labflow.backend.observability.JobTelemetry;
+import com.labflow.backend.observability.JobTelemetry.Event;
 import com.labflow.backend.project.ProjectNotFoundException;
 import com.labflow.backend.project.ProjectPermissionService;
 import com.labflow.backend.project.ProjectRepository;
@@ -20,19 +22,22 @@ public class JobSubmissionService {
     private final JdbcTemplate jdbcTemplate;
     private final JobRequestHasher requestHasher;
     private final Clock clock;
+    private final JobTelemetry telemetry;
 
     public JobSubmissionService(
             ProjectPermissionService permissionService,
             ProjectRepository projectRepository,
             JdbcTemplate jdbcTemplate,
             JobRequestHasher requestHasher,
-            Clock clock
+            Clock clock,
+            JobTelemetry telemetry
     ) {
         this.permissionService = permissionService;
         this.projectRepository = projectRepository;
         this.jdbcTemplate = jdbcTemplate;
         this.requestHasher = requestHasher;
         this.clock = clock;
+        this.telemetry = telemetry;
     }
 
     @Transactional
@@ -146,6 +151,7 @@ public class JobSubmissionService {
                 INSERT INTO job_events (job_id, from_status, to_status, event_type, created_at)
                 VALUES (?, NULL, 'QUEUED', 'JOB_CREATED', ?)
                 """, job.id(), Timestamp.from(now));
+        telemetry.committed(Event.SUBMITTED, job.id(), null, null);
         return job;
     }
 

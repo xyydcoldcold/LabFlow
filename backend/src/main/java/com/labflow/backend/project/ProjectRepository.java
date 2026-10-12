@@ -12,6 +12,10 @@ import org.springframework.data.repository.query.Param;
 
 public interface ProjectRepository extends JpaRepository<Project, Long> {
 
+    @Override
+    @EntityGraph(attributePaths = "owner")
+    Optional<Project> findById(Long id);
+
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT project FROM Project project WHERE project.id = :projectId")
     Optional<Project> findByIdForUpdate(@Param("projectId") Long projectId);

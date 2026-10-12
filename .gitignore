@@ -16,6 +16,16 @@ LabFlow_Project_Implementation_Report_CN.docx
 .env
 .env.production
 .env.production.tmp
+# Local environment variants; preserve templates
+.env.*
+!.env.example
+!.env.production.example
+
+# Real local credentials
+/secrets/
+
+# Word temporary lock files
+~$*.docx
 backups/
 playwright-report/
 test-results/

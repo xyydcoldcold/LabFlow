@@ -23,7 +23,7 @@ public final class SecurityErrorWriter {
         response.setStatus(status);
         response.setCharacterEncoding("UTF-8");
         response.setContentType(MediaType.APPLICATION_JSON_VALUE);
-        String requestId = request.getHeader("X-Request-ID");
+        String requestId = (request.getAttribute("requestId") != null ? request.getAttribute("requestId").toString() : request.getHeader("X-Request-ID"));
         response.getWriter().write("""
                 {"timestamp":"%s","status":%d,"code":"%s","message":"%s","path":"%s","requestId":%s}
                 """.formatted(

@@ -11,6 +11,8 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import com.labflow.backend.observability.JobTelemetry;
+import com.labflow.backend.observability.JobTelemetry.Event;
 import com.labflow.backend.artifact.ArtifactStorageProperties;
 import com.labflow.backend.job.JobLogChunkResponse;
 import com.labflow.backend.job.JobLogStreamService;
@@ -39,6 +41,7 @@ public class WorkerExecutionService {
     private final JobStateMachine stateMachine;
     private final JobLogStreamService logStreamService;
     private final Clock clock;
+    private final JobTelemetry telemetry;
     private final JobDispatchService dispatch;
 
     public WorkerExecutionService(
@@ -49,7 +52,8 @@ public class WorkerExecutionService {
             JobStateMachine stateMachine,
             JobLogStreamService logStreamService,
             Clock clock,
-            JobDispatchService dispatch
+            JobDispatchService dispatch,
+            JobTelemetry telemetry
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.objectMapper = objectMapper;
@@ -58,6 +62,7 @@ public class WorkerExecutionService {
         this.stateMachine = stateMachine;
         this.logStreamService = logStreamService;
         this.clock = clock;
+        this.telemetry = telemetry;
         this.dispatch = dispatch;
     }
 
@@ -163,6 +168,7 @@ public class WorkerExecutionService {
                         jsonb_build_object('attemptId', ?::bigint, 'workerId', ?::bigint), ?)
                 """, jobId, attemptId, workerId, Timestamp.from(now));
 
+        telemetry.committed(Event.CLAIMED, jobId, attemptId, workerId);
         JsonNode spec = job.snapshot().get("experimentConfig").get("spec").deepCopy();
         return new ClaimJobResponse(
                 jobId,
@@ -329,6 +335,8 @@ public class WorkerExecutionService {
                 VALUES (?, 'RUNNING', ?, ?, jsonb_build_object('attemptId', ?::bigint), ?)
                 """, attempt.jobId(), finalState.name(), "JOB_" + finalState.name(),
                 attemptId, Timestamp.from(now));
+        telemetry.committed(failure != null ? Event.FAILED : Event.valueOf(finalState.name()),
+                attempt.jobId(), attemptId, attempt.workerId());
     }
 
     private LockedAttempt lockAttempt(long attemptId) {

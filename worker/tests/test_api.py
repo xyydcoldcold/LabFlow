@@ -1,7 +1,27 @@
 import io
 import json
+import uuid
+import urllib.error
 
 from labflow_worker.api import LabFlowApi
+
+
+def test_transport_retries_keep_request_id_and_next_operation_gets_a_new_one(monkeypatch) -> None:
+    requests = []
+    def urlopen(request, *, timeout):
+        requests.append(request)
+        if len(requests) == 1:
+            raise urllib.error.URLError("injected network failure")
+        return io.StringIO('{"workerId":7}')
+    monkeypatch.setattr("urllib.request.urlopen", urlopen)
+    monkeypatch.setattr("time.sleep", lambda _: None)
+    api = LabFlowApi("http://backend:8080", "test-service-token")
+    api.register("worker", "test", ["demo.sleep_hash"])
+    first_id = requests[0].get_header("X-request-id")
+    assert str(uuid.UUID(first_id)) == first_id
+    assert requests[1].get_header("X-request-id") == first_id == api.last_request_id
+    api.heartbeat_worker(7)
+    assert requests[2].get_header("X-request-id") != first_id
 
 
 def test_heartbeats_use_service_auth_and_bounded_http_timeout(monkeypatch) -> None:

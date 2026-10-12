@@ -30,7 +30,8 @@ class RecoveryBatchServiceTest {
     private final JdbcTemplate jdbc = mock(JdbcTemplate.class);
     private final RecoveryBatchService service = new RecoveryBatchService(
             jdbc, new RecoveryProperties(50), new JobStateMachine(), Clock.fixed(NOW, ZoneOffset.UTC),
-            new JobDispatchService(jdbc, Clock.fixed(NOW, ZoneOffset.UTC)));
+            new JobDispatchService(jdbc, Clock.fixed(NOW, ZoneOffset.UTC)),
+            mock(com.labflow.backend.observability.JobTelemetry.class));
 
     @BeforeEach
     void candidate() throws Exception {

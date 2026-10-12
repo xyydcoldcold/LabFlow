@@ -41,7 +41,8 @@ import tools.jackson.databind.ObjectMapper;
 @Testcontainers
 @SpringBootTest(classes = BackendApplication.class, webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
         properties = {"labflow.outbox.publisher.enabled=false", "labflow.recovery.reaper.enabled=false",
-                "server.shutdown=immediate"})
+                "server.shutdown=immediate", "spring.datasource.hikari.maximum-pool-size=2",
+                "spring.datasource.hikari.minimum-idle=1", "spring.datasource.hikari.connection-timeout=1000"})
 @Timeout(30)
 class JobLogStreamIntegrationTest {
     @Container
@@ -63,6 +64,25 @@ class JobLogStreamIntegrationTest {
     void closeStreams() throws Exception {
         for (BufferedReader reader : readers) reader.close();
         client.close();
+    }
+
+    @Test
+    void moreOpenStreamsThanSqlConnectionsDoNotStarveQueriesOrWorkerWrites() throws Exception {
+        var attempt = attempt();
+        var first = append(attempt, 0, "backlog\n");
+        var connected = new ArrayList<BufferedReader>();
+        for (int index = 0; index < 4; index++) {
+            var reader = connect(attempt.jobId(), token(attempt.userId()), "0");
+            assertEvent(reader, first);
+            connected.add(reader);
+        }
+        // The pool has just two connections, but every subscription remains open here.
+        var detail = client.send(HttpRequest.newBuilder(URI.create("http://127.0.0.1:" + port + "/api/jobs/" + attempt.jobId()))
+                .timeout(Duration.ofSeconds(5)).header("Authorization", "Bearer " + token(attempt.userId())).build(),
+                HttpResponse.BodyHandlers.ofString());
+        assertThat(detail.statusCode()).isEqualTo(200);
+        var live = append(attempt, 1, "all subscribers receive this\n");
+        for (var reader : connected) assertEvent(reader, live);
     }
 
     @Test

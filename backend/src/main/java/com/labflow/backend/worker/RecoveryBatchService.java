@@ -5,6 +5,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 
+import com.labflow.backend.observability.JobTelemetry;
+import com.labflow.backend.observability.JobTelemetry.Event;
 import com.labflow.backend.job.JobState;
 import com.labflow.backend.job.JobStateMachine;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -18,6 +20,7 @@ public class RecoveryBatchService {
     private final RecoveryProperties properties;
     private final JobStateMachine stateMachine;
     private final Clock clock;
+    private final JobTelemetry telemetry;
     private final JobDispatchService dispatch;
 
     public RecoveryBatchService(
@@ -25,12 +28,14 @@ public class RecoveryBatchService {
             RecoveryProperties properties,
             JobStateMachine stateMachine,
             Clock clock,
-            JobDispatchService dispatch
+            JobDispatchService dispatch,
+            JobTelemetry telemetry
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.properties = properties;
         this.stateMachine = stateMachine;
         this.clock = clock;
+        this.telemetry = telemetry;
         this.dispatch = dispatch;
     }
 
@@ -38,7 +43,7 @@ public class RecoveryBatchService {
     public RecoveryBatchResult recoverBatch() {
         Instant now = clock.instant();
         List<ExpiredAttempt> attempts = jdbcTemplate.query("""
-                SELECT a.id AS attempt_id, a.job_id, a.attempt_no, j.max_attempts, j.version,
+                SELECT a.id AS attempt_id, a.job_id, a.worker_id, a.attempt_no, j.max_attempts, j.version,
                        j.cancel_requested_at IS NOT NULL AS cancel_requested
                 FROM job_attempts a
                 JOIN jobs j ON j.id = a.job_id
@@ -50,6 +55,7 @@ public class RecoveryBatchService {
                 """, (row, rowNumber) -> new ExpiredAttempt(
                 row.getLong("attempt_id"),
                 row.getLong("job_id"),
+                row.getLong("worker_id"),
                 row.getInt("attempt_no"),
                 row.getInt("max_attempts"),
                 row.getLong("version"),
@@ -95,6 +101,8 @@ public class RecoveryBatchService {
                     attempt.attemptId(), attempt.attemptNo(),
                     attempt.cancelRequested() ? "CANCEL_REQUESTED" : "LEASE_EXPIRED",
                     attempt.maxAttempts(), Timestamp.from(now));
+            telemetry.committed(canRetry ? Event.RECOVERED : attempt.cancelRequested() ? Event.CANCELLED : Event.EXHAUSTED,
+                    attempt.jobId(), attempt.attemptId(), attempt.workerId());
             if (canRetry) {
                 dispatch.retry(attempt.jobId(), attempt.attemptNo());
                 requeued++;
@@ -117,6 +125,7 @@ public class RecoveryBatchService {
     private record ExpiredAttempt(
             long attemptId,
             long jobId,
+            long workerId,
             int attemptNo,
             int maxAttempts,
             long jobVersion,

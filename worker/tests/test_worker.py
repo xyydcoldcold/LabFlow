@@ -60,8 +60,9 @@ def bare_worker(api: Any) -> Worker:
     return worker
 
 
-def test_consumer_acknowledges_only_after_terminal_result_is_confirmed(monkeypatch: Any) -> None:
+def test_consumer_acknowledges_only_after_terminal_result_is_confirmed(monkeypatch: Any, capsys) -> None:
     api = SuccessfulApi()
+    api.last_request_id = "test-correlation"
     worker = bare_worker(api)
     channel = Channel()
     expected = {"summary": {"energyHartree": -1.0}, "manifest": {}}
@@ -76,6 +77,11 @@ def test_consumer_acknowledges_only_after_terminal_result_is_confirmed(monkeypat
     assert channel.acked == [5]
     assert channel.nacked == []
     assert api.logs[0]["stream"] == "SYSTEM"
+    events = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert [event["event"] for event in events] == ["CLAIMED", "SUCCEEDED"]
+    for event in events:
+        assert (event["jobId"], event["attemptId"], event["workerId"], event["requestId"]) == (42, 9, 7, "test-correlation")
+        assert "attemptToken" not in event and "serviceToken" not in event
 
 
 def test_consumer_acks_duplicate_claim_and_dead_letters_invalid_job() -> None:

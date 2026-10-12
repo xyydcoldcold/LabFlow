@@ -5,6 +5,8 @@ import java.time.Clock;
 import java.time.Instant;
 import java.util.List;
 
+import com.labflow.backend.observability.JobTelemetry;
+import com.labflow.backend.observability.JobTelemetry.Event;
 import com.labflow.backend.project.ProjectAccessDeniedException;
 import com.labflow.backend.project.ProjectPermissionService;
 import com.labflow.backend.project.ProjectRole;
@@ -18,17 +20,20 @@ public class JobCancellationService {
     private final ProjectPermissionService permissionService;
     private final JobStateMachine stateMachine;
     private final Clock clock;
+    private final JobTelemetry telemetry;
 
     public JobCancellationService(
             JdbcTemplate jdbcTemplate,
             ProjectPermissionService permissionService,
             JobStateMachine stateMachine,
-            Clock clock
+            Clock clock,
+            JobTelemetry telemetry
     ) {
         this.jdbcTemplate = jdbcTemplate;
         this.permissionService = permissionService;
         this.stateMachine = stateMachine;
         this.clock = clock;
+        this.telemetry = telemetry;
     }
 
     @Transactional
@@ -76,6 +81,8 @@ public class JobCancellationService {
                             jsonb_build_object('requestedBy', ?::bigint, 'reason', 'USER_REQUEST'), ?)
                     """, jobId, userId, Timestamp.from(now));
         }
+        telemetry.committed(nextState == JobState.CANCELLED ? Event.CANCELLED : Event.CANCEL_REQUESTED,
+                jobId, null, null);
         return new JobCancellationResponse(jobId, nextState, now);
     }
 

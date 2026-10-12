@@ -1,5 +1,6 @@
 import json
 import time
+import uuid
 import urllib.error
 import urllib.request
 from typing import Any
@@ -69,11 +70,13 @@ class LabFlowApi:
         retries: int = 2,
         timeout: float = 15,
     ) -> dict[str, Any]:
+        self.last_request_id = str(uuid.uuid4())
         data = json.dumps(payload, separators=(",", ":")).encode()
         headers = {
             "Authorization": f"Bearer {self.service_token}",
             "Content-Type": "application/json",
             "Accept": "application/json",
+            "X-Request-ID": self.last_request_id,
         }
         if attempt_token:
             headers["X-Attempt-Token"] = attempt_token

@@ -2,6 +2,7 @@ import json
 import os
 import socket
 import traceback
+from datetime import datetime, timezone
 from typing import Any
 
 import pika
@@ -42,13 +43,13 @@ class Worker:
         channel = connection.channel()
         channel.basic_qos(prefetch_count=1)
         channel.basic_consume(queue=QUEUE, on_message_callback=self._on_message, auto_ack=False)
-        print(f"Worker {self.instance_name} registered as {self.worker_id}; waiting for jobs", flush=True)
+        self._event("WORKER_READY")
 
         def heartbeat() -> None:
             try:
                 self.api.heartbeat_worker(self.worker_id)
             except ApiError as error:
-                print(f"Worker heartbeat failed: {error.code}", flush=True)
+                self._event("HEARTBEAT_FAILED")
             connection.call_later(5, heartbeat)
 
         connection.call_later(5, heartbeat)
@@ -79,6 +80,7 @@ class Worker:
 
         attempt_id = int(claim["attemptId"])
         attempt_token = str(claim["attemptToken"])
+        self._event("CLAIMED", claim["jobId"], attempt_id)
         lease = AttemptLease(
             self.api, attempt_id, attempt_token,
             lambda: self.connection.process_data_events(time_limit=0),
@@ -91,11 +93,13 @@ class Worker:
                 result = execute_task(claim, self.image_digest, logs.write, lease.tick)
             lease.tick(force=True)
             self.api.succeed(attempt_id, attempt_token, result)
+            self._event("SUCCEEDED", claim["jobId"], attempt_id)
         except AttemptCancelled:
-            if not self._confirm_cancelled(attempt_id, attempt_token):
+            if not self._confirm_cancelled(attempt_id, attempt_token, claim["jobId"]):
                 channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
                 return
         except LeaseUnavailable:
+            self._event("LEASE_UNAVAILABLE", claim["jobId"], attempt_id)
             # Do not report a task failure or success after losing ownership.
             channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
             return
@@ -104,7 +108,7 @@ class Worker:
                 channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
                 return
             if isinstance(error, ApiError) and error.code == "CANCEL_REQUESTED":
-                if self._confirm_cancelled(attempt_id, attempt_token):
+                if self._confirm_cancelled(attempt_id, attempt_token, claim["jobId"]):
                     channel.basic_ack(delivery_tag=method.delivery_tag)
                 else:
                     channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
@@ -118,15 +122,24 @@ class Worker:
                 pass
             try:
                 self.api.fail(attempt_id, attempt_token, failure)
+                self._event("FAILED", claim["jobId"], attempt_id)
             except ApiError as report_error:
-                if report_error.code != "CANCEL_REQUESTED" or not self._confirm_cancelled(attempt_id, attempt_token):
+                if report_error.code != "CANCEL_REQUESTED" or not self._confirm_cancelled(attempt_id, attempt_token, claim["jobId"]):
                     channel.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
                     return
         channel.basic_ack(delivery_tag=method.delivery_tag)
 
-    def _confirm_cancelled(self, attempt_id: int, attempt_token: str) -> bool:
+    def _event(self, event: str, job_id: int | None = None, attempt_id: int | None = None) -> None:
+        print(json.dumps({
+            "timestamp": datetime.now(timezone.utc).isoformat(), "level": "INFO", "event": event,
+            "jobId": job_id, "attemptId": attempt_id, "workerId": self.worker_id,
+            "requestId": getattr(self.api, "last_request_id", None),
+        }, ensure_ascii=False), flush=True)
+
+    def _confirm_cancelled(self, attempt_id: int, attempt_token: str, job_id: int | None = None) -> bool:
         try:
             self.api.cancelled(attempt_id, attempt_token)
+            self._event("CANCELLED", job_id, attempt_id)
             return True
         except ApiError:
             return False
