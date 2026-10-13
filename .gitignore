@@ -29,6 +29,13 @@ LabFlow_Project_Implementation_Report_CN.docx
 backups/
 playwright-report/
 test-results/
+
+# Coverage reports and JVM heap dumps
+coverage/
+htmlcov/
+.coverage
+.coverage.*
+*.hprof
 /docs/WEEK4_ACCEPTANCE.md
 /docs/WEEK*_DAY*.md
 /docs/PROJECT_KNOWLEDGE.md
