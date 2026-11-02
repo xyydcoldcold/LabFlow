@@ -57,6 +57,13 @@ class ExperimentConfigValidatorTest {
     }
 
     @Test
+    void reportsTheLimitsItEnforces() {
+        assertThat(new ExperimentConfigValidator(1024, 300).limits())
+                .isEqualTo(new ExecutionLimits(128, 1024, 1, 300));
+        assertThat(validator.limits()).isEqualTo(new ExecutionLimits(128, 65536, 1, 86400));
+    }
+
+    @Test
     void appliesDeploymentLimitsWithinTheSchema() {
         ExperimentConfigValidator limited = new ExperimentConfigValidator(1024, 300);
         assertThat(limited.validate(validSpec())).isNotNull();

@@ -54,6 +54,16 @@ export interface ExperimentSpec {
   timeoutSeconds: number;
 }
 
+export interface ExecutionLimits {
+  minMemoryMb: number;
+  maxMemoryMb: number;
+  minTimeoutSeconds: number;
+  maxTimeoutSeconds: number;
+}
+
+/** Version 1 schema bounds; used until the server reports its deployment limits. */
+export const SCHEMA_EXECUTION_LIMITS: ExecutionLimits = { minMemoryMb: 128, maxMemoryMb: 65536, minTimeoutSeconds: 1, maxTimeoutSeconds: 86400 };
+
 export interface ExperimentConfig {
   id: number;
   name: string;

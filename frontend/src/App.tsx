@@ -5,6 +5,7 @@ import {
   apiRequest,
   AuthResponse,
   AuthUser,
+  ExecutionLimits,
   ExperimentConfig,
   ExperimentSpec,
   formatBytes,
@@ -15,6 +16,7 @@ import {
   JobSummary,
   Project,
   ProjectMember,
+  SCHEMA_EXECUTION_LIMITS,
 } from "./api";
 import { streamJobLogs } from "./job-stream";
 import { filterJobs, formatDuration, jobStatuses, jobTiming, PAGE_SIZE, readJobFilters, type JobFilters } from "./job-list";
@@ -715,6 +717,15 @@ function ConfigsPanel({ token, projectId, configs, canContribute, onChanged }: {
   const [timeout, setTimeoutValue] = useState(300);
   const [busy, setBusy] = useState(false);
   const [feedback, setFeedback] = useState("");
+  const [limits, setLimits] = useState<ExecutionLimits>(SCHEMA_EXECUTION_LIMITS);
+
+  useEffect(() => {
+    let active = true;
+    apiRequest<ExecutionLimits>("/api/experiment-configs/limits", { token })
+      .then((serverLimits) => { if (active) setLimits(serverLimits); })
+      .catch(() => { /* keep schema bounds; the server still validates on submit */ });
+    return () => { active = false; };
+  }, [token]);
 
   async function create(event: FormEvent) {
     event.preventDefault();
@@ -752,7 +763,8 @@ function ConfigsPanel({ token, projectId, configs, canContribute, onChanged }: {
             <label>Configuration name<input value={name} onChange={(e) => setName(e.target.value)} required maxLength={200} placeholder="Baseline" /></label>
             <div className="field-pair"><label>Method<input value={method} onChange={(e) => setMethod(e.target.value)} required maxLength={50} /></label><label>Basis<input value={basis} onChange={(e) => setBasis(e.target.value)} required maxLength={100} /></label></div>
             <div className="field-pair"><label>Charge<input type="number" min={-20} max={20} value={charge} onChange={(e) => setCharge(e.target.valueAsNumber)} required /></label><label>Spin<input type="number" min={0} max={20} value={spin} onChange={(e) => setSpin(e.target.valueAsNumber)} required /></label></div>
-            <div className="field-pair"><label>Memory (MB)<input type="number" min={128} max={65536} value={memory} onChange={(e) => setMemory(e.target.valueAsNumber)} required /></label><label>Timeout (sec)<input type="number" min={1} max={86400} value={timeout} onChange={(e) => setTimeoutValue(e.target.valueAsNumber)} required /></label></div>
+            <div className="field-pair"><label>Memory (MB)<input type="number" min={limits.minMemoryMb} max={limits.maxMemoryMb} value={memory} onChange={(e) => setMemory(e.target.valueAsNumber)} required /></label><label>Timeout (sec)<input type="number" min={limits.minTimeoutSeconds} max={limits.maxTimeoutSeconds} value={timeout} onChange={(e) => setTimeoutValue(e.target.valueAsNumber)} required /></label></div>
+            <small className="form-hint">Memory {limits.minMemoryMb}–{limits.maxMemoryMb} MB · timeout {limits.minTimeoutSeconds}–{limits.maxTimeoutSeconds} s on this server.</small>
             {feedback && <div className="form-feedback">{feedback}</div>}
             <button className="primary-button wide" disabled={busy}>{busy ? "Creating…" : "Create immutable version"}</button>
             <small className="form-hint">Using an existing name creates version +1.</small>

@@ -10,6 +10,9 @@ import tools.jackson.databind.JsonNode;
 @Component
 public class ExperimentConfigValidator {
 
+    public static final int MIN_MEMORY_MB = 128;
+    public static final int MIN_TIMEOUT_SECONDS = 1;
+
     private static final Set<String> FIELDS = Set.of(
             "schemaVersion", "taskType", "method", "basis", "charge", "spin",
             "maxMemoryMb", "timeoutSeconds"
@@ -35,6 +38,10 @@ public class ExperimentConfigValidator {
         this.maxTimeoutSeconds = maxTimeoutSeconds;
     }
 
+    public ExecutionLimits limits() {
+        return new ExecutionLimits(MIN_MEMORY_MB, maxMemoryMb, MIN_TIMEOUT_SECONDS, maxTimeoutSeconds);
+    }
+
     public JsonNode validate(JsonNode spec) {
         if (spec == null || !spec.isObject()) {
             throw invalid("spec must be a JSON object");
@@ -45,8 +52,8 @@ public class ExperimentConfigValidator {
             for (String field : spec.propertyNames()) if (!fields.contains(field)) throw invalid("unsupported field: " + field);
             for (String field : fields) if (!spec.has(field)) throw invalid("missing required field: " + field);
             requireInteger(spec, "schemaVersion", 1, 1);
-            requireInteger(spec, "maxMemoryMb", 128, maxMemoryMb);
-            requireInteger(spec, "timeoutSeconds", 1, maxTimeoutSeconds);
+            requireInteger(spec, "maxMemoryMb", MIN_MEMORY_MB, maxMemoryMb);
+            requireInteger(spec, "timeoutSeconds", MIN_TIMEOUT_SECONDS, maxTimeoutSeconds);
             if (!spec.get("sleepSeconds").isNumber() || !Double.isFinite(spec.get("sleepSeconds").doubleValue())
                     || spec.get("sleepSeconds").doubleValue() < 0 || spec.get("sleepSeconds").doubleValue() > 30)
                 throw invalid("sleepSeconds must be between 0 and 30");
@@ -73,8 +80,8 @@ public class ExperimentConfigValidator {
         requireText(spec, "basis", 100);
         requireInteger(spec, "charge", -20, 20);
         requireInteger(spec, "spin", 0, 20);
-        requireInteger(spec, "maxMemoryMb", 128, maxMemoryMb);
-        requireInteger(spec, "timeoutSeconds", 1, maxTimeoutSeconds);
+        requireInteger(spec, "maxMemoryMb", MIN_MEMORY_MB, maxMemoryMb);
+        requireInteger(spec, "timeoutSeconds", MIN_TIMEOUT_SECONDS, maxTimeoutSeconds);
 
         return spec.deepCopy();
     }

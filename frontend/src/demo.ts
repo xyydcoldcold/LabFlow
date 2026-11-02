@@ -33,6 +33,7 @@ export function demoResponse(path: string, method = "GET"): unknown {
   if (path === "/api/projects/1/members") return [];
   if (path === "/api/projects/1/inputs") return structuredClone([input]);
   if (path === "/api/projects/1/configs") return structuredClone(configs);
+  if (path === "/api/experiment-configs/limits") return { minMemoryMb: 128, maxMemoryMb: 1024, minTimeoutSeconds: 1, maxTimeoutSeconds: 300 };
   if (path === "/api/projects/1/jobs") return demoJobs.map(({ id, projectId, molecularInputId, experimentConfigId, status, createdAt, updatedAt, waitingSeconds, runningSeconds, timingMeasuredAt }): JobSummary => ({ id, projectId, molecularInputId, experimentConfigId, status, createdAt, updatedAt, waitingSeconds, runningSeconds, timingMeasuredAt }));
   const match = /^\/api\/jobs\/(\d+)$/.exec(path);
   const job = match && demoJobs.find((item) => item.id === Number(match[1]));
