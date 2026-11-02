@@ -1,5 +1,6 @@
 package com.labflow.backend.messaging;
 
+import org.springframework.amqp.core.AmqpAdmin;
 import org.springframework.amqp.rabbit.core.RabbitAdmin;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -21,14 +22,18 @@ import org.springframework.stereotype.Component;
 )
 class RabbitTopologyInitializer implements ApplicationRunner {
 
-    private final RabbitAdmin rabbitAdmin;
+    // Boot exposes its RabbitAdmin as an AmqpAdmin bean, so it cannot be injected by its concrete type.
+    private final AmqpAdmin amqpAdmin;
 
-    RabbitTopologyInitializer(RabbitAdmin rabbitAdmin) {
-        this.rabbitAdmin = rabbitAdmin;
+    RabbitTopologyInitializer(AmqpAdmin amqpAdmin) {
+        this.amqpAdmin = amqpAdmin;
     }
 
     @Override
     public void run(ApplicationArguments args) {
+        if (!(amqpAdmin instanceof RabbitAdmin rabbitAdmin)) {
+            throw new IllegalStateException("Expected a RabbitAdmin to declare the RabbitMQ topology");
+        }
         rabbitAdmin.initialize();
     }
 }
