@@ -1,0 +1,123 @@
+name: Deploy
+
+# Runs only after the CI workflow finishes successfully for a push to main,
+# or manually from the Actions tab. The deploy target and SSH credentials
+# come from repository secrets; nothing about the server is hardcoded here.
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deploy at a time. Never cancel a running deploy: deploy.py stops the
+# gateway and replaces containers, so an interrupted run could leave the site
+# down. A newer pending run replaces an older pending one.
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to production
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    environment:
+      name: production
+      url: https://lab-flow.online
+    env:
+      DEPLOY_SHA: ${{ github.event.workflow_run.head_sha || github.sha }}
+
+    steps:
+      - name: Configure SSH
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+          DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          for name in DEPLOY_SSH_KEY DEPLOY_KNOWN_HOSTS DEPLOY_HOST DEPLOY_USER; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Repository secret $name is not set"
+              exit 1
+            fi
+          done
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > ~/.ssh/known_hosts
+          chmod 644 ~/.ssh/known_hosts
+          cat > ~/.ssh/config <<CONFIG
+          Host production
+            HostName $DEPLOY_HOST
+            User $DEPLOY_USER
+            IdentityFile ~/.ssh/deploy_key
+            IdentitiesOnly yes
+            StrictHostKeyChecking yes
+            ServerAliveInterval 30
+            ServerAliveCountMax 10
+          CONFIG
+
+      - name: Pull and deploy on the server
+        run: |
+          ssh production bash -s -- "$DEPLOY_SHA" <<'REMOTE'
+          set -euo pipefail
+          sha="$1"
+          cd ~/LabFlow
+          git fetch --quiet origin main </dev/null
+          if ! git merge-base --is-ancestor "$sha" origin/main; then
+            echo "::error::Commit $sha is not on origin/main"
+            exit 1
+          fi
+          # Fast-forward only. If a newer commit is already checked out, this is a no-op.
+          git merge --ff-only "$sha"
+          echo "Deploying $(git rev-parse --short=12 HEAD): $(git log -1 --format=%s)"
+          # </dev/null: docker compose exec would otherwise read the rest of this script.
+          python3 scripts/deploy.py up </dev/null
+          REMOTE
+
+      - name: Check the public site
+        run: |
+          for attempt in $(seq 1 12); do
+            if curl -fsS --max-time 10 https://lab-flow.online/healthz > /dev/null; then
+              echo "https://lab-flow.online/healthz is reachable"
+              exit 0
+            fi
+            echo "Site not reachable yet (attempt $attempt/12)"
+            sleep 10
+          done
+          echo "::error::https://lab-flow.online/healthz did not respond after deploy"
+          exit 1
+
+      - name: Show container status and logs
+        if: failure()
+        run: |
+          ssh production bash -s <<'REMOTE' || true
+          cd ~/LabFlow
+          C="docker compose --project-name labflow-prod --env-file .env.production --file docker-compose.prod.yml"
+          echo "== git =="
+          git log -1 --format='%h %s'
+          git status --short
+          echo "== containers =="
+          $C ps -a
+          for service in backend worker gateway frontend; do
+            echo "== $service logs (last 150 lines) =="
+            $C logs --no-color --tail 150 "$service" 2>&1 || true
+          done
+          REMOTE
+          echo "::error::Deploy failed. If the gateway is stopped, fix the cause and run 'python3 scripts/deploy.py resume' or re-run 'up' on the server. A crash-looping backend blocks the backup step; remove it first with 'docker compose ... rm -sf backend'."
+
+      - name: Remove SSH key
+        if: always()
+        run: rm -f ~/.ssh/deploy_key
