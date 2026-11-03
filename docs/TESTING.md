@@ -29,6 +29,30 @@ for intentionally long-lived subscriptions.
 The Outbox rollback test uses a mocked publisher to isolate the database transaction
 boundary. Actual broker behavior is covered by the separate RabbitMQ suites.
 
+## Run all checks
+
+From the repository root:
+
+```bash
+cd backend
+./gradlew test
+cd ../frontend
+npm ci
+npm run typecheck
+npm test
+npm run build
+cd ../worker
+python3 -m pytest
+```
+
+With the Compose stack running, run the real browser acceptance flow:
+
+```bash
+cd frontend
+npx playwright install chromium
+npm run test:e2e
+```
+
 ## Run and inspect
 
 From the repository root:
@@ -84,3 +108,33 @@ credentials, reports and the test-only one-attempt DLQ injection. Metrics/loggin
 are implemented; k6 loads, three-run median/p95 benchmarks, and dependency/worker
 fault-injection benchmark evidence remain for Days 4–5. The earlier twenty-run
 crash acceptance does not establish a new benchmark or cloud/default-lease results.
+
+## Worker-crash acceptance
+
+The isolated harness uses its own Compose project and volumes and only binds test HTTP ports to localhost. Build the standard local backend/worker images first, then build the latest acceptance overlays:
+
+```bash
+backend/gradlew -p backend bootJar
+docker compose build backend worker-a
+docker compose -p labflow-w5-local -f tests/fault-injection/compose.yml build
+docker compose -p labflow-w5-local -f tests/fault-injection/compose.yml up -d --wait postgres rabbitmq backend frontend
+python3 tests/fault-injection/week5.py --project labflow-w5-local --rounds 20
+```
+
+Each round SIGKILLs worker-a, starts worker-b, checks LOST + SUCCEEDED history, rejects old-token writes, and verifies exactly one result row. The JSON report at `test-results/week5-crash.json` stays local and records every run plus median/p95 timings and PASS/FAIL gates. This test stack uses a five-second lease, one-second recovery scan, and the actual 15/60/300-second retry TTLs; these timings do not characterize the default 30-second lease or a cloud VM.
+
+For browser acceptance after the crash suite:
+
+```bash
+docker compose -p labflow-w5-local -f tests/fault-injection/compose.yml up -d --no-deps worker-b
+cd frontend
+LABFLOW_E2E_URL=http://127.0.0.1:13085 npm run test:e2e -- week5-replay.spec.ts
+```
+
+Stop the dedicated test stack from the repository root when finished:
+
+```bash
+docker compose -p labflow-w5-local -f tests/fault-injection/compose.yml down
+```
+
+Volumes remain available for evidence review. VM recovery, backup restoration, and scientific-throughput benchmarking require their own acceptance runs.
