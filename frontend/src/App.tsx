@@ -1,4 +1,5 @@
 import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 
 import {
   ApiError,
@@ -245,6 +246,7 @@ function Dashboard(props: DashboardProps) {
   const [projectName, setProjectName] = useState("");
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const [workspaceNavSlot, setWorkspaceNavSlot] = useState<HTMLDivElement | null>(null);
 
   async function createProject(event: FormEvent) {
     event.preventDefault();
@@ -266,6 +268,7 @@ function Dashboard(props: DashboardProps) {
     <main className="app-shell">
       <aside className="sidebar">
         <Brand />
+        <div className="sidebar-workspace" ref={setWorkspaceNavSlot} />
         <div className="sidebar-section-title"><span>Projects</span><button ref={projectTrigger} className="icon-button" aria-label="Create project" disabled={isDemoMode()} onClick={() => setShowCreateProject(true)}>+</button></div>
         <nav className="project-nav" aria-label="Projects">
           {projects.map((project) => (
@@ -285,7 +288,7 @@ function Dashboard(props: DashboardProps) {
 
       <section className="main-stage">
         {projects.length > 1 && <label className="mobile-project-picker">Active project<select value={selectedProject?.id ?? ""} onChange={(event) => onSelectProject(Number(event.target.value))}>{projects.map((project) => <option key={project.id} value={project.id}>{project.name}</option>)}</select></label>}
-        {selectedProject ? <ProjectWorkspace key={selectedProject.id} token={token} project={selectedProject} projects={projects} onSelectProject={onSelectProject} /> : <WelcomeEmpty onCreate={() => setShowCreateProject(true)} />}
+        {selectedProject ? <ProjectWorkspace key={selectedProject.id} token={token} project={selectedProject} projects={projects} onSelectProject={onSelectProject} navSlot={workspaceNavSlot} /> : <WelcomeEmpty onCreate={() => setShowCreateProject(true)} />}
       </section>
 
       {showCreateProject && (
@@ -327,7 +330,7 @@ function WelcomeEmpty({ onCreate }: { onCreate: () => void }) {
   );
 }
 
-function ProjectWorkspace({ token, project, projects, onSelectProject }: { token: string; project: Project; projects: Project[]; onSelectProject: (id: number) => void }) {
+function ProjectWorkspace({ token, project, projects, onSelectProject, navSlot }: { token: string; project: Project; projects: Project[]; onSelectProject: (id: number) => void; navSlot: HTMLElement | null }) {
   const [tab, setTab] = useState<WorkspaceTab>("jobs");
   const [members, setMembers] = useState<ProjectMember[]>([]);
   const [inputs, setInputs] = useState<MolecularInput[]>([]);
@@ -385,8 +388,19 @@ function ProjectWorkspace({ token, project, projects, onSelectProject }: { token
   const canManageMembers = project.currentUserRole === "OWNER";
   const namedConfigCount = useMemo(() => new Set(configs.map((config) => config.name)).size, [configs]);
 
+  const sectionNav = (
+    <nav className="tabs" aria-label="Project sections">
+      <span className="sidebar-label">Workspace</span>
+      <TabButton name="jobs" current={tab} onSelect={setTab}>Jobs <span>{jobs.length}</span></TabButton>
+      <TabButton name="inputs" current={tab} onSelect={setTab}>Inputs <span>{inputs.length}</span></TabButton>
+      <TabButton name="configs" current={tab} onSelect={setTab}>Configurations <span>{configs.length}</span></TabButton>
+      <TabButton name="members" current={tab} onSelect={setTab}>Members <span>{members.length + 1}</span></TabButton>
+    </nav>
+  );
+
   return (
     <div className="workspace">
+      {navSlot ? createPortal(sectionNav, navSlot) : sectionNav}
       <header className="workspace-header">
         <div><span className="eyebrow">Project workspace</span><h1>{project.name}</h1><p>Owned by {project.owner.displayName} · Created {formatDate(project.createdAt)}</p></div>
         <span className={`role-pill role-${project.currentUserRole.toLowerCase()}`}>{project.currentUserRole}</span>
@@ -397,12 +411,6 @@ function ProjectWorkspace({ token, project, projects, onSelectProject }: { token
         <Metric value={jobs.length} label="Jobs" />
         <Metric value={members.length + 1} label="Team members" />
       </div>
-      <nav className="tabs" aria-label="Project sections">
-        <TabButton name="jobs" current={tab} onSelect={setTab}>Jobs <span>{jobs.length}</span></TabButton>
-        <TabButton name="inputs" current={tab} onSelect={setTab}>Inputs <span>{inputs.length}</span></TabButton>
-        <TabButton name="configs" current={tab} onSelect={setTab}>Configurations <span>{configs.length}</span></TabButton>
-        <TabButton name="members" current={tab} onSelect={setTab}>Members <span>{members.length + 1}</span></TabButton>
-      </nav>
       {error && <div className="page-error" role="alert"><strong>Workspace could not be loaded.</strong><span>{error}</span><button onClick={refresh}>Retry</button></div>}
       {listError && <div className="page-error" role="status"><strong>Job list could not refresh.</strong><span>{listError}</span><button onClick={() => setListRetry((value) => value + 1)}>Retry job list</button></div>}
       {loading ? <ContentSkeleton /> : error ? null : (
@@ -532,6 +540,7 @@ function JobsPanel({ projects, onSelectProject, token, projectId, inputs, config
     return () => { cancelled = true; controller.abort(); if (timer !== undefined) window.clearTimeout(timer); };
   }, [detailRefresh, onJobUpdated, selectedId, token]);
 
+  const configById = useMemo(() => new Map(configs.map((config) => [config.id, config])), [configs]);
   const summary = details?.result?.summary;
   const latestAttempt = details?.attempts.at(-1);
   const acceptedAttempt = details?.attempts.find((attempt) => attempt.id === details.result?.attemptId);
@@ -547,10 +556,14 @@ function JobsPanel({ projects, onSelectProject, token, projectId, inputs, config
         <label>Search job ID<input type="search" value={filters.query} onChange={(event) => changeFilters({ ...filters, query: event.target.value, page: 1 })} placeholder="e.g. #42" /></label>
       </div>
       <p className="muted job-count" aria-live="polite">{filteredJobs.length} matching jobs · newest first</p>
+      {visibleJobs.length > 0 && <div className="job-list-header" aria-hidden="true"><span /><span>Job</span><span>Configuration</span><span>Time</span><span>Status</span></div>}
       <div className="job-list">{visibleJobs.map((job) => {
         const timing = jobTiming(job, now);
+        const config = configById.get(job.experimentConfigId);
         return <div className="job-list-entry" key={job.id}><input className="compare-checkbox" type="checkbox" aria-label={`Compare job #${job.id}`} checked={comparisonIds.includes(job.id)} disabled={job.status !== "SUCCEEDED" || (!comparisonIds.includes(job.id) && comparisonIds.length >= 5)} onChange={() => toggleComparison(job.id)} /><button className={job.id === selectedId ? "job-row active" : "job-row"} onClick={() => setSelectedId(job.id)}>
-          <span><strong>Job #{job.id}</strong><small>{formatDate(job.createdAt)}</small><small title="Total time across all attempts, including retry waits">Waiting {formatDuration(timing.waiting)} · Running {formatDuration(timing.running)}</small></span><StatusBadge status={job.status} />
+          <span className="job-row-id"><strong>Job #{job.id}</strong><small>{formatDate(job.createdAt)}</small></span>
+          <span className="job-row-config"><span>{config ? `${config.name} · v${config.version}` : `Config #${job.experimentConfigId}`}</span>{config && <small>{config.spec.method} / {config.spec.basis}</small>}</span>
+          <small className="job-row-timing" title="Total time across all attempts, including retry waits">Waiting {formatDuration(timing.waiting)} · Running {formatDuration(timing.running)}</small><StatusBadge status={job.status} />
         </button></div>;
       })}</div>
       {!filteredJobs.length && <EmptyList title="No matching jobs" text="Try another status or job ID." />}
@@ -562,12 +575,12 @@ function JobsPanel({ projects, onSelectProject, token, projectId, inputs, config
         <div className="job-detail-heading"><div><span className="eyebrow">Job #{details.id}</span><h2>{details.specSnapshot.experimentConfig?.name ?? "Calculation"}</h2><p>{details.specSnapshot.molecularInput?.originalFilename ?? `Input #${details.molecularInputId}`}</p></div><StatusBadge status={details.status} /></div>
         <dl className="job-facts"><div><dt>Attempt</dt><dd>{latestAttempt?.attemptNo ?? "Waiting"}</dd></div><div><dt>Worker</dt><dd>{latestAttempt?.workerInstance ?? "Unassigned"}</dd></div><div><dt>Method</dt><dd>{details.specSnapshot.experimentConfig?.spec?.method ?? "—"}</dd></div><div><dt>Basis</dt><dd>{details.specSnapshot.experimentConfig?.spec?.basis ?? "—"}</dd></div></dl>
         {summary && <div className="result-panel"><span className="eyebrow">Result</span><div className="result-grid">
-          {summary.energyHartree !== undefined && <div><small>Energy</small><strong>{Number(summary.energyHartree).toFixed(10)} Eh</strong></div>}
+          {summary.energyHartree !== undefined && <div className="result-energy"><small>Energy</small><strong>{Number(summary.energyHartree).toFixed(10)} Eh</strong></div>}
           {summary.converged !== undefined && <div><small>Converged</small><strong>{summary.converged ? "Yes" : "No"}</strong></div>}
           {summary.durationSeconds !== undefined && <div><small>Runtime</small><strong>{Number(summary.durationSeconds).toFixed(2)}s</strong></div>}
         </div><p className="result-provenance">One saved result for this job · {acceptedAttempt ? `Attempt ${acceptedAttempt.attemptNo} on ${acceptedAttempt.workerInstance}` : `Attempt #${details.result!.attemptId}`}.</p></div>}
-        {details.status === "FAILED" && canManage && <button className="secondary-button" disabled={replaying} onClick={() => void replay()}>{replaying ? "Creating replay…" : "Replay as a new job"}</button>}
-        {details.canCancel && !details.cancelRequestedAt && <button className="secondary-button" disabled={cancellingId !== null} onClick={() => void cancelJob(details)}>{cancellingId === details.id ? "Requesting cancellation…" : "Cancel job"}</button>}
+        <div className="detail-actions">{details.status === "FAILED" && canManage && <button className="secondary-button" disabled={replaying} onClick={() => void replay()}>{replaying ? "Creating replay…" : "Replay as a new job"}</button>}
+        {details.canCancel && !details.cancelRequestedAt && <button className="secondary-button" disabled={cancellingId !== null} onClick={() => void cancelJob(details)}>{cancellingId === details.id ? "Requesting cancellation…" : "Cancel job"}</button>}</div>
         {cancelError?.id === details.id && <div className="inline-error" role="alert">{cancelError.message}</div>}
         <JobHistory job={details} />
         {latestAttempt?.failure && <div className="inline-error"><strong>{String(latestAttempt.failure.code ?? "Task failed")}</strong><br />{String(latestAttempt.failure.message ?? "The worker reported a failure.")}</div>}
@@ -644,7 +657,7 @@ function StatusBadge({ status }: { status: JobSummary["status"] }) {
 }
 
 function Metric({ value, label }: { value: number; label: string }) {
-  return <div className="metric"><strong>{value.toString().padStart(2, "0")}</strong><span>{label}</span></div>;
+  return <div className="metric"><strong>{value}</strong><span>{label}</span></div>;
 }
 
 function TabButton({ name, current, onSelect, children }: { name: WorkspaceTab; current: WorkspaceTab; onSelect: (tab: WorkspaceTab) => void; children: React.ReactNode }) {
